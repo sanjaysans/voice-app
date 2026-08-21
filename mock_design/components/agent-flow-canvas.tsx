@@ -13,18 +13,12 @@ type BuilderNode = {
 
 type CanvasProps = {
   nodes: BuilderNode[];
+  edges: Array<[string, string]>;
   selectedId: string;
   onSelect: (id: string) => void;
 };
 
-const edges = [
-  ["router", "billing"],
-  ["router", "support"],
-  ["router", "sales"],
-  ["support", "escalation"]
-] as const;
-
-export function AgentFlowCanvas({ nodes, selectedId, onSelect }: CanvasProps) {
+export function AgentFlowCanvas({ nodes, edges, selectedId, onSelect }: CanvasProps) {
   return (
     <div className="relative h-full w-full overflow-auto scrollbar-subtle p-8">
       <svg className="pointer-events-none absolute inset-0 h-full w-full" preserveAspectRatio="none">
@@ -61,7 +55,9 @@ export function AgentFlowCanvas({ nodes, selectedId, onSelect }: CanvasProps) {
           style={{ left: node.x, top: node.y }}
           type="button"
         >
-          <p className="text-xs uppercase tracking-[0.16em] text-[#6D6D78]">{node.id === "router" ? "Router" : "Specialist"}</p>
+          <p className="text-xs uppercase tracking-[0.16em] text-[#6D6D78]">
+            {node.id === "router" ? "Router" : node.id === "escalation" ? "Human handoff" : "Workflow step"}
+          </p>
           <h3 className="mt-2 text-base font-semibold">{node.label}</h3>
           <p className="mt-3 text-sm text-[#6D6D78]">{node.state}</p>
         </button>

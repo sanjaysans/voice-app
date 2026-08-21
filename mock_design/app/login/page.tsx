@@ -8,7 +8,7 @@ import { Button, Input } from "@/components/ui";
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("ops@voicehq.ai");
-  const [password, setPassword] = useState("demo-password");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -66,9 +66,9 @@ export default function LoginPage() {
           </form>
 
           <div className="mt-6 rounded-2xl border border-border bg-[#fafafe] p-4">
-            <p className="text-sm font-medium text-[#17171F]">Prototype note</p>
+            <p className="text-sm font-medium text-[#17171F]">Workspace note</p>
             <p className="mt-1 text-sm leading-6 text-[#6D6D78]">
-              This phase uses mocked tenant data, in-memory flows, and client-side navigation only.
+              Sign in to review active workflows, call activity, and connection health.
             </p>
           </div>
         </div>
@@ -76,7 +76,7 @@ export default function LoginPage() {
 
       <aside className="hidden bg-sidebar px-12 py-14 text-white lg:flex lg:flex-col lg:justify-between">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.28em] text-accent-soft">Validated direction</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.28em] text-accent-soft">Platform overview</p>
           <h2 className="mt-6 max-w-lg text-[32px] font-bold leading-[1.1]">
             Multi-vendor voice infrastructure, designed for operators who need speed and control.
           </h2>

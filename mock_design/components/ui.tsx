@@ -167,7 +167,10 @@ export function Select({
   label,
   options,
   ...props
-}: SelectHTMLAttributes<HTMLSelectElement> & BaseFieldProps & { options: string[] }) {
+}: SelectHTMLAttributes<HTMLSelectElement> &
+  BaseFieldProps & {
+    options: Array<string | { label: string; value: string }>;
+  }) {
   return (
     <label className="block">
       {label ? <span className="mb-2 block text-sm font-medium text-[#17171F]">{label}</span> : null}
@@ -179,8 +182,11 @@ export function Select({
         {...props}
       >
         {options.map((option) => (
-          <option key={option} value={option}>
-            {option}
+          <option
+            key={typeof option === "string" ? option : option.value}
+            value={typeof option === "string" ? option : option.value}
+          >
+            {typeof option === "string" ? option : option.label}
           </option>
         ))}
       </select>

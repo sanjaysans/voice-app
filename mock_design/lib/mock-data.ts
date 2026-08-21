@@ -1,617 +1,710 @@
-export const dashboardStats = [
-  { label: "Active calls", value: "28", change: "+6 from last hour", trend: "up" as const },
-  { label: "Calls today", value: "1,284", change: "+14% vs yesterday", trend: "up" as const },
-  { label: "Avg handle time", value: "4m 12s", change: "-22s vs baseline", trend: "up" as const },
-  { label: "Escalation rate", value: "7.8%", change: "-1.2% week over week", trend: "up" as const }
-];
+export type Tone = "neutral" | "success" | "warning" | "danger";
 
-export const navigationSpotlight = [
-  { title: "Prompt Studio", href: "/prompts", group: "Build", copy: "Tune scoped prompts, variables, and first-message behavior." },
-  { title: "Live Monitoring", href: "/live", group: "Operate", copy: "Watch active calls, partial transcripts, and escalation state." },
-  { title: "Secrets", href: "/secrets", group: "Admin", copy: "Review tenant credentials and validation posture." }
-];
+export type VendorStack = {
+  stt: string;
+  llm: string;
+  tts: string;
+};
 
-export const recentCalls = [
-  {
-    id: "rc_1",
-    caller: "+1 415 555 0188",
-    agent: "Billing concierge",
-    status: "Completed",
-    statusTone: "success" as const,
-    duration: "03:22",
-    time: "2 minutes ago",
-    resolution: "Invoice sent via SMS"
-  },
-  {
-    id: "rc_2",
-    caller: "+1 212 555 0164",
-    agent: "Support triage",
-    status: "Escalated",
-    statusTone: "warning" as const,
-    duration: "06:54",
-    time: "13 minutes ago",
-    resolution: "Routed to live operator"
-  },
-  {
-    id: "rc_3",
-    caller: "+44 20 7946 0958",
-    agent: "Sales concierge",
-    status: "Dropped",
-    statusTone: "danger" as const,
-    duration: "00:49",
-    time: "28 minutes ago",
-    resolution: "Network interruption"
-  }
-];
+export type FlowNode = {
+  id: string;
+  label: string;
+  x: number;
+  y: number;
+  tone: Exclude<Tone, "danger">;
+  state: string;
+  prompt: string;
+  tools: string[];
+  knowledge: string[];
+  vendors: VendorStack;
+};
 
-export const agents = [
-  {
-    id: "agent_billing",
-    name: "Billing concierge",
-    description: "Handles invoices, payment failures, and refund policy questions.",
-    status: "Published",
-    statusTone: "success" as const,
-    lastEdited: "2 hours ago",
-    stack: { stt: "Deepgram", llm: "GPT-4.1", tts: "ElevenLabs" }
-  },
-  {
-    id: "agent_support",
-    name: "Support triage",
-    description: "Performs issue intake, routes to knowledge, and escalates edge cases.",
-    status: "Published",
-    statusTone: "success" as const,
-    lastEdited: "Yesterday",
-    stack: { stt: "AssemblyAI", llm: "Claude Sonnet", tts: "Cartesia" }
-  },
-  {
-    id: "agent_sales",
-    name: "Sales concierge",
-    description: "Qualifies prospects and schedules demos with CRM tool calls.",
-    status: "Draft",
-    statusTone: "warning" as const,
-    lastEdited: "3 days ago",
-    stack: { stt: "Deepgram", llm: "GPT-4.1", tts: "Azure TTS" }
-  }
-];
+export type AgentTool = {
+  id: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+};
 
-export const builderNodes = [
-  {
-    id: "router",
-    label: "Router agent",
-    x: 56,
-    y: 260,
-    state: "Intent classification",
-    tone: "success" as const,
-    prompt: "Classify the caller intent in under 2 turns and hand off to the best specialist agent.",
-    tools: ["intent_classifier", "language_detector"],
-    kb: ["Global routing policy"],
-    vendors: { stt: "Deepgram", llm: "GPT-4.1", tts: "ElevenLabs" }
-  },
-  {
-    id: "billing",
-    label: "Billing specialist",
-    x: 360,
-    y: 90,
-    state: "Payment and refund flows",
-    tone: "success" as const,
-    prompt: "Verify billing identity and assist with invoices, payment methods, and refund windows.",
-    tools: ["fetch_invoice", "payment_status", "refund_policy"],
-    kb: ["Billing policy", "Refund FAQ"],
-    vendors: { stt: "Deepgram", llm: "GPT-4.1", tts: "ElevenLabs" }
-  },
-  {
-    id: "support",
-    label: "Support specialist",
-    x: 360,
-    y: 260,
-    state: "Knowledge-led troubleshooting",
-    tone: "warning" as const,
-    prompt: "Use the troubleshooting knowledge base first, then escalate if confidence stays low.",
-    tools: ["search_kb", "create_ticket", "device_lookup"],
-    kb: ["Troubleshooting KB", "Incident library"],
-    vendors: { stt: "AssemblyAI", llm: "Claude Sonnet", tts: "Cartesia" }
-  },
-  {
-    id: "sales",
-    label: "Sales specialist",
-    x: 360,
-    y: 430,
-    state: "Lead qualification",
-    tone: "success" as const,
-    prompt: "Qualify company size, timeline, and deployment scope before offering a meeting.",
-    tools: ["crm_lookup", "book_demo"],
-    kb: ["Pricing matrix", "Objection handling"],
-    vendors: { stt: "Deepgram", llm: "GPT-4.1", tts: "Azure TTS" }
-  },
-  {
-    id: "escalation",
-    label: "Human escalation",
-    x: 670,
-    y: 260,
-    state: "Fallback or policy escalation",
-    tone: "warning" as const,
-    prompt: "Prepare concise handoff notes with intent, summary, sentiment, and open actions.",
-    tools: ["page_operator", "create_summary"],
-    kb: ["Escalation policy"],
-    vendors: { stt: "AssemblyAI", llm: "Claude Sonnet", tts: "Cartesia" }
-  }
-];
+export type KnowledgeSource = {
+  id: string;
+  name: string;
+  description: string;
+  status: "Connected" | "Syncing";
+  enabled: boolean;
+};
 
-export const callLogs = [
-  {
-    id: "call_01",
-    caller: "+1 415 555 0188",
-    agent: "Billing concierge",
-    intent: "Invoice dispute",
-    status: "Completed",
-    statusTone: "success" as const,
-    duration: "03:22",
-    time: "Today, 09:42",
-    vendorTrace: "Deepgram -> GPT-4.1 -> ElevenLabs",
-    variables: [
-      { key: "Account", value: "ACME-2041" },
-      { key: "Invoice", value: "INV-99214" },
-      { key: "Outcome", value: "PDF sent via SMS" }
-    ],
-    toolCalls: [
-      { name: "fetch_invoice", result: "Invoice retrieved successfully" },
-      { name: "send_sms_link", result: "Delivery queued to verified mobile number" }
-    ],
-    guardrails: ["PII masked", "Refund policy enforced"],
-    transcript: [
-      { speaker: "Caller", timestamp: "00:04", text: "I need a copy of last month's invoice and I think the amount is wrong." },
-      { speaker: "Voice", timestamp: "00:11", text: "I can help with that. I verified your account and found invoice INV-99214 for July." },
-      { speaker: "Voice", timestamp: "01:32", text: "I have sent the invoice copy to your verified mobile number and noted the billing discrepancy for review." }
-    ]
-  },
-  {
-    id: "call_02",
-    caller: "+1 212 555 0164",
-    agent: "Support triage",
-    intent: "Device setup failure",
-    status: "Escalated",
-    statusTone: "warning" as const,
-    duration: "06:54",
-    time: "Today, 08:17",
-    vendorTrace: "AssemblyAI -> Claude Sonnet -> Cartesia",
-    variables: [
-      { key: "Device", value: "Sensor Hub S3" },
-      { key: "Severity", value: "High" },
-      { key: "Ticket", value: "SUP-4491" }
-    ],
-    toolCalls: [
-      { name: "search_kb", result: "No high-confidence setup resolution found" },
-      { name: "create_ticket", result: "Ticket SUP-4491 created" }
-    ],
-    guardrails: ["Escalation threshold reached", "Compliance disclaimer delivered"],
-    transcript: [
-      { speaker: "Caller", timestamp: "00:06", text: "The device never gets past the activation step and we've tried this on three units." },
-      { speaker: "Voice", timestamp: "02:19", text: "I checked the known troubleshooting steps and this needs a human specialist." },
-      { speaker: "Voice", timestamp: "06:21", text: "I have created ticket SUP-4491 and routed your case to a live operator with the summary attached." }
-    ]
-  },
-  {
-    id: "call_03",
-    caller: "+44 20 7946 0958",
-    agent: "Sales concierge",
-    intent: "Pricing request",
-    status: "Dropped",
-    statusTone: "danger" as const,
-    duration: "00:49",
-    time: "Yesterday, 17:02",
-    vendorTrace: "Deepgram -> GPT-4.1 -> Azure TTS",
-    variables: [
-      { key: "Region", value: "UK" },
-      { key: "Lead stage", value: "Qualified" },
-      { key: "Outcome", value: "Connection lost" }
-    ],
-    toolCalls: [{ name: "crm_lookup", result: "Lead created in outbound CRM" }],
-    guardrails: ["Consent notice delivered"],
-    transcript: [
-      { speaker: "Caller", timestamp: "00:04", text: "Can you explain your enterprise pricing bands for international support lines?" },
-      { speaker: "Voice", timestamp: "00:18", text: "Absolutely. I can outline pricing bands based on call volume, seat count, and regions." }
-    ]
-  }
-];
+export type Agent = {
+  id: string;
+  name: string;
+  description: string;
+  status: "Draft" | "Published";
+  statusTone: "warning" | "success";
+  lastEdited: string;
+  segment: string;
+  goal: string;
+  stack: VendorStack;
+  flowNodes: FlowNode[];
+  flowEdges: Array<[string, string]>;
+  toolsCatalog: AgentTool[];
+  knowledgeSources: KnowledgeSource[];
+};
 
-export const teamMembers = [
-  {
-    name: "Sanjay Kumar",
-    email: "sanjay@voicehq.ai",
-    role: "Admin",
-    roleTone: "danger" as const,
-    team: "Platform",
-    lastActive: "Now"
-  },
-  {
-    name: "Nadia Stone",
-    email: "nadia@voicehq.ai",
-    role: "Editor",
-    roleTone: "warning" as const,
-    team: "Ops",
-    lastActive: "14 minutes ago"
-  },
-  {
-    name: "Luis Chen",
-    email: "luis@voicehq.ai",
-    role: "Viewer",
-    roleTone: "neutral" as const,
-    team: "QA",
-    lastActive: "2 hours ago"
-  }
-];
+export type DemoScenario = {
+  id: string;
+  name: string;
+  summary: string;
+  outcome: "Qualified" | "Meeting booked" | "Follow-up" | "Voicemail";
+  tone: Exclude<Tone, "danger">;
+  leadName: string;
+  company: string;
+  phone: string;
+  timeline: string[];
+  transcriptSeed: Array<{
+    speaker: "Lead" | "Voice";
+    text: string;
+  }>;
+  extractedVariables: Array<{ key: string; value: string }>;
+  toolCalls: Array<{ name: string; result: string }>;
+  guardrails: string[];
+  nextStep: string;
+};
 
-export const phoneNumbers = [
-  {
-    label: "Primary support line",
-    number: "+1 415 555 0188",
-    vendor: "Twilio",
-    tenant: "Acme Health",
-    type: "Local",
-    status: "Healthy",
-    statusTone: "success" as const,
-    health: "99.98% uptime"
-  },
-  {
-    label: "Outbound sales trunk",
-    number: "sip:sales-west@carrier.voice",
-    vendor: "Telnyx",
-    tenant: "Acme Health",
-    type: "SIP trunk",
-    status: "Warning",
-    statusTone: "warning" as const,
-    health: "Intermittent auth failures"
-  },
-  {
-    label: "After-hours line",
-    number: "+1 212 555 0164",
-    vendor: "Twilio",
-    tenant: "Pilot tenant",
-    type: "Toll-free",
-    status: "Provisioning",
-    statusTone: "neutral" as const,
-    health: "Awaiting verification"
-  }
-];
+export type ActiveCall = {
+  id: string;
+  agentId: string;
+  agentName: string;
+  scenarioId: string;
+  scenarioName: string;
+  leadName: string;
+  company: string;
+  phone: string;
+  phaseIndex: number;
+  phases: string[];
+  timeline: string[];
+  transcript: Array<{
+    speaker: "Lead" | "Voice";
+    timestamp: string;
+    text: string;
+  }>;
+  extractedVariables: Array<{ key: string; value: string }>;
+  toolCalls: Array<{ name: string; result: string }>;
+  guardrails: string[];
+  nextStep: string;
+};
 
-export const vendorCredentials = [
-  { vendor: "Deepgram", type: "STT", maskedKey: "dg_live_xxxx_xxxx_41af", status: "Validated", tone: "success" as const },
-  { vendor: "GPT-4.1", type: "LLM", maskedKey: "sk-proj-xxxx-92hz", status: "Validated", tone: "success" as const },
-  { vendor: "ElevenLabs", type: "TTS", maskedKey: "elv_xxxx_8k3m", status: "Validated", tone: "success" as const },
-  { vendor: "Twilio", type: "Telephony", maskedKey: "ACf8...3e1 / token pending rotation", status: "Expiring soon", tone: "warning" as const }
-];
+export type CallRecord = {
+  id: string;
+  agentId: string;
+  agentName: string;
+  leadName: string;
+  company: string;
+  phone: string;
+  scenarioName: string;
+  status: "Completed" | "Follow-up" | "Dropped";
+  statusTone: Tone;
+  duration: string;
+  time: string;
+  summary: string;
+  outcome: string;
+  nextStep: string;
+  vendorTrace: string;
+  syncedToCrm: boolean;
+  extractedVariables: Array<{ key: string; value: string }>;
+  toolCalls: Array<{ name: string; result: string }>;
+  guardrails: string[];
+  transcript: Array<{
+    speaker: "Lead" | "Voice";
+    timestamp: string;
+    text: string;
+  }>;
+};
 
-export const webhooks = [
-  {
-    url: "https://ops.acmehealth.ai/webhooks/voice",
-    events: ["call.completed", "call.escalated", "guardrail.triggered"],
-    status: "Active",
-    tone: "success" as const
-  },
-  {
-    url: "https://sandbox.partner.io/hooks/voice",
-    events: ["call.failed", "call.dropped"],
-    status: "Retrying",
-    tone: "warning" as const
-  }
-];
+export type Connection = {
+  id: string;
+  name: string;
+  category: "Telephony" | "CRM" | "Calendar" | "Knowledge";
+  vendor: string;
+  description: string;
+  status: "Connected" | "Needs setup" | "Warning";
+  tone: Exclude<Tone, "danger">;
+  detail: string;
+  lastChecked: string;
+};
 
-export const deliveries = [
-  { id: "d_1", event: "call.completed", time: "09:42", response: "200 OK", status: "Delivered", tone: "success" as const },
-  { id: "d_2", event: "call.escalated", time: "08:19", response: "503 Service Unavailable", status: "Failed", tone: "danger" as const },
-  { id: "d_3", event: "guardrail.triggered", time: "07:51", response: "202 Accepted", status: "Queued", tone: "warning" as const }
-];
+export type NotificationItem = {
+  id: string;
+  title: string;
+  message: string;
+  tone: Exclude<Tone, "neutral">;
+  href: string;
+};
 
-export const promptConfigs = [
-  {
-    id: "prompt_router",
-    name: "Router opening",
-    scope: "Router agent / initial turn classification",
-    status: "Published",
-    tone: "success" as const,
-    voice: "Neutral concierge",
-    lastEdited: "45 minutes ago",
-    fallback: "Escalate after 2 low-confidence turns",
-    variables: ["{{caller_name}}", "{{language}}"],
-    firstMessage: "Thanks for calling Acme Health. I can help with billing, support, or scheduling.",
-    prompt:
-      "You are the Voice router agent. Classify intent quickly, keep the opening concise, and pass a structured summary to the correct downstream specialist."
-  },
-  {
-    id: "prompt_support",
-    name: "Support troubleshooting",
-    scope: "Support node / device troubleshooting",
-    status: "Draft",
-    tone: "warning" as const,
-    voice: "Technical calm",
-    lastEdited: "Yesterday",
-    fallback: "Offer human transfer after 3 failed clarifications",
-    variables: ["{{device_model}}", "{{account_tier}}"],
-    firstMessage: "I can help troubleshoot your device issue. Tell me what happened right before the failure.",
-    prompt:
-      "Use troubleshooting KB results first. Ask only one diagnostic question at a time, and never invent unsupported steps if retrieval confidence is low."
-  }
-];
+export const rangeMultipliers = {
+  Today: 1,
+  "7D": 4,
+  "30D": 11,
+  Quarter: 28
+} as const;
 
-export const knowledgeBases = [
-  {
-    name: "Support troubleshooting KB",
-    description: "Hardware activation, deployment runbooks, known outages, and field issue playbooks.",
-    status: "Healthy",
-    tone: "success" as const,
-    sources: 18,
-    chunks: "12.4k",
-    recall: "92%",
-    updated: "2 hours ago"
-  },
-  {
-    name: "Billing & refund policy",
-    description: "Refund rules, invoice FAQ, payment failure SOPs, and jurisdiction-specific policy text.",
-    status: "Refreshing",
-    tone: "warning" as const,
-    sources: 7,
-    chunks: "3.1k",
-    recall: "88%",
-    updated: "Sync in progress"
-  }
-];
+const defaultStack: VendorStack = {
+  stt: "Deepgram",
+  llm: "GPT-4.1",
+  tts: "ElevenLabs"
+};
 
-export const toolsCatalog = [
+export const dateRanges = ["Today", "7D", "30D", "Quarter"];
+
+export const demoScenarios: DemoScenario[] = [
   {
-    phase: "Pre-call tools",
-    description: "Hydrate context before the first agent response.",
-    tools: [
+    id: "scenario_inbound_demo",
+    name: "Inbound qualification",
+    summary: "A warm lead wants to understand fit, timeline, and next steps.",
+    outcome: "Meeting booked",
+    tone: "success",
+    leadName: "Maya Patel",
+    company: "Northstar Clinics",
+    phone: "+1 415 555 0188",
+    timeline: ["Dialing", "Connected", "Qualification", "Booking"],
+    transcriptSeed: [
       {
-        name: "crm_lookup",
-        purpose: "Fetch caller account and priority tier from CRM.",
-        write: false,
-        mappings: ["account_name -> {{account_name}}", "priority -> {{priority_tier}}"]
-      }
-    ]
-  },
-  {
-    phase: "In-call tools",
-    description: "Live retrieval and side-effect actions during the conversation.",
-    tools: [
-      {
-        name: "lookup_invoice",
-        purpose: "Retrieve invoice status and delivery links.",
-        write: false,
-        mappings: ["pdf_url -> {{invoice_link}}", "balance_due -> {{balance_due}}"]
+        speaker: "Lead",
+        text: "We run six clinics and want to know whether your calling system can handle intake and follow-up."
       },
       {
-        name: "create_ticket",
-        purpose: "Open a support ticket after failure diagnosis.",
-        write: true,
-        mappings: ["ticket_id -> {{ticket_id}}"]
-      }
-    ]
-  },
-  {
-    phase: "Post-call tools",
-    description: "Persist structured outcomes after the call ends.",
-    tools: [
+        speaker: "Voice",
+        text: "It can. I can confirm your workflow, call volume, and whether you want qualification, reminders, or conversion support."
+      },
       {
-        name: "send_summary_webhook",
-        purpose: "Deliver call summary and extracted variables to client systems.",
-        write: true,
-        mappings: ["summary -> external webhook payload"]
+        speaker: "Lead",
+        text: "We need all three, and we want to launch next quarter if the integrations look simple."
+      },
+      {
+        speaker: "Voice",
+        text: "You look like a strong fit. I found an opening on Tuesday at 11:00 AM Pacific and booked a solutions call."
       }
-    ]
+    ],
+    extractedVariables: [
+      { key: "Lead score", value: "91 / 100" },
+      { key: "Seats", value: "6 clinics" },
+      { key: "Timeline", value: "Next quarter" },
+      { key: "Priority workflow", value: "Intake + follow-up" }
+    ],
+    toolCalls: [
+      { name: "crm_lookup", result: "Matched existing account owner: West region SDR" },
+      { name: "calendar_hold", result: "Booked consultation on Tue 11:00 AM PT" }
+    ],
+    guardrails: ["Consent notice delivered", "PII redaction active"],
+    nextStep: "Meeting confirmed and CRM owner notified."
+  },
+  {
+    id: "scenario_outbound_followup",
+    name: "Outbound reactivation",
+    summary: "A stale opportunity answers and needs lightweight re-qualification.",
+    outcome: "Follow-up",
+    tone: "warning",
+    leadName: "Jordan Lee",
+    company: "Peak Home Services",
+    phone: "+1 212 555 0164",
+    timeline: ["Dialing", "Connected", "Objection handling", "Follow-up queued"],
+    transcriptSeed: [
+      {
+        speaker: "Lead",
+        text: "We looked at automation last year, but timing was bad and our team was too busy."
+      },
+      {
+        speaker: "Voice",
+        text: "That makes sense. I can keep this brief and understand whether your priorities or volume changed."
+      },
+      {
+        speaker: "Lead",
+        text: "We are expanding to two new markets, but I need something my sales reps can trust."
+      },
+      {
+        speaker: "Voice",
+        text: "I captured the expansion plan and assigned a human follow-up with the full summary so your team gets a tailored proposal."
+      }
+    ],
+    extractedVariables: [
+      { key: "Lead score", value: "74 / 100" },
+      { key: "Expansion", value: "2 new markets" },
+      { key: "Buying confidence", value: "Needs proof" },
+      { key: "Next touch", value: "Human follow-up" }
+    ],
+    toolCalls: [
+      { name: "crm_lookup", result: "Recovered dormant opportunity from 2025 pipeline" },
+      { name: "task_create", result: "Assigned follow-up to account executive" }
+    ],
+    guardrails: ["Consent notice delivered", "Do-not-call check passed"],
+    nextStep: "AE follow-up queued with objection summary."
+  },
+  {
+    id: "scenario_voicemail",
+    name: "Voicemail recovery",
+    summary: "No live pickup, so the system leaves a compliant callback and queues retry logic.",
+    outcome: "Voicemail",
+    tone: "warning",
+    leadName: "Avery Brooks",
+    company: "Harbor Legal",
+    phone: "+1 646 555 0190",
+    timeline: ["Dialing", "Voicemail reached", "Message left", "Retry scheduled"],
+    transcriptSeed: [
+      {
+        speaker: "Voice",
+        text: "Hi Avery, this is Voice calling with a quick follow-up on your inquiry."
+      },
+      {
+        speaker: "Voice",
+        text: "I am sharing a callback note with your team and will try again during the approved calling window."
+      }
+    ],
+    extractedVariables: [
+      { key: "Disposition", value: "Voicemail" },
+      { key: "Retry window", value: "Tomorrow 10:00 AM local" }
+    ],
+    toolCalls: [
+      { name: "voicemail_log", result: "Compliant voicemail recorded" },
+      { name: "retry_schedule", result: "Retry added for tomorrow" }
+    ],
+    guardrails: ["Calling window respected", "Voicemail disclaimer included"],
+    nextStep: "Retry scheduled for next approved window."
   }
 ];
 
-export const shieldPolicies = [
+export function createFlowNodes(name = "Lead qualification voice agent"): FlowNode[] {
+  return [
+    {
+      id: "router",
+      label: "Entry router",
+      x: 56,
+      y: 250,
+      tone: "success",
+      state: "Intent and context check",
+      prompt: `Open the conversation for ${name}, confirm the caller's goal, and route to the best next step within two turns.`,
+      tools: ["intent_classifier", "crm_lookup"],
+      knowledge: ["Brand overview", "Calling policy"],
+      vendors: { ...defaultStack }
+    },
+    {
+      id: "qualify",
+      label: "Qualification",
+      x: 360,
+      y: 80,
+      tone: "success",
+      state: "Fit and urgency scoring",
+      prompt: "Capture use case, urgency, team size, and conversion signals without sounding scripted.",
+      tools: ["lead_score", "crm_update"],
+      knowledge: ["Qualification playbook", "Discovery prompts"],
+      vendors: { ...defaultStack }
+    },
+    {
+      id: "convert",
+      label: "Conversion path",
+      x: 360,
+      y: 250,
+      tone: "warning",
+      state: "Offer next best action",
+      prompt: "Move qualified callers to the right next step: booking, transfer, quote request, or human follow-up.",
+      tools: ["calendar_hold", "quote_request"],
+      knowledge: ["Pricing guide", "Objection handling"],
+      vendors: { ...defaultStack }
+    },
+    {
+      id: "follow_up",
+      label: "Follow-up queue",
+      x: 360,
+      y: 420,
+      tone: "warning",
+      state: "Retry and nurture",
+      prompt: "Handle voicemail, no-answer, or soft-interest outcomes with compliant callbacks and task creation.",
+      tools: ["retry_schedule", "task_create"],
+      knowledge: ["Calling window policy", "Follow-up sequences"],
+      vendors: { ...defaultStack }
+    },
+    {
+      id: "escalation",
+      label: "Human escalation",
+      x: 668,
+      y: 250,
+      tone: "warning",
+      state: "Handoff and summary",
+      prompt: "Escalate gracefully when the caller needs a human, and generate a tight handoff summary with next actions.",
+      tools: ["page_rep", "summary_writeback"],
+      knowledge: ["Escalation policy"],
+      vendors: { ...defaultStack }
+    }
+  ];
+}
+
+const defaultEdges: Array<[string, string]> = [
+  ["router", "qualify"],
+  ["router", "convert"],
+  ["router", "follow_up"],
+  ["qualify", "escalation"],
+  ["convert", "escalation"]
+];
+
+export const initialAgents: Agent[] = [
   {
-    stage: "Input guardrails",
-    description: "User speech checks before the LLM reasons on it.",
-    status: "Active",
-    tone: "success" as const,
-    rules: [
-      { name: "PII masking", copy: "Mask card, SSN, and policy identifiers before storage and long-term logs.", lastTriggered: "6 mins ago" },
-      { name: "Prompt injection scan", copy: "Detect instructions that attempt to override policy or expose hidden system behavior.", lastTriggered: "39 mins ago" }
+    id: "agent_growth",
+    name: "Growth inbound",
+    description: "Handles inbound qualification and routes qualified buyers into the best next action.",
+    status: "Published",
+    statusTone: "success",
+    lastEdited: "18 minutes ago",
+    segment: "Inbound acquisition",
+    goal: "Qualify high-intent callers and route them to the next best action.",
+    stack: { ...defaultStack },
+    flowNodes: createFlowNodes("Growth inbound"),
+    flowEdges: defaultEdges,
+    toolsCatalog: [
+      { id: "crm_lookup", name: "CRM lookup", description: "Pull account history and owner before responding.", enabled: true },
+      { id: "lead_score", name: "Lead scoring", description: "Score fit from role, volume, urgency, and use case.", enabled: true },
+      { id: "calendar_hold", name: "Calendar booking", description: "Reserve the next best meeting slot live in-call.", enabled: true },
+      { id: "task_create", name: "Task creation", description: "Queue a human follow-up when the call is not ready to convert.", enabled: true }
+    ],
+    knowledgeSources: [
+      { id: "kb_brand", name: "Brand overview", description: "Positioning, differentiation, and product intro.", status: "Connected", enabled: true },
+      { id: "kb_pricing", name: "Pricing guide", description: "Packages, thresholds, and expansion scenarios.", status: "Connected", enabled: true },
+      { id: "kb_objections", name: "Objection handling", description: "Approved responses for common concerns.", status: "Syncing", enabled: true }
     ]
   },
   {
-    stage: "Output guardrails",
-    description: "Response checks before the caller hears the answer.",
-    status: "Reviewing",
-    tone: "warning" as const,
-    rules: [
-      { name: "Refund policy verifier", copy: "Verify refund statements against active billing policy snippets.", lastTriggered: "14 mins ago" },
-      { name: "Write-tool confirmation", copy: "Require structured confirmation before irreversible actions are executed.", lastTriggered: "27 mins ago" }
-    ]
-  },
-  {
-    stage: "Behavior guardrails",
-    description: "Conversation-level intervention and escalation policies.",
-    status: "Active",
-    tone: "success" as const,
-    rules: [
-      { name: "Frustration escalation", copy: "Escalate when caller frustration rises alongside repeated failures.", lastTriggered: "12 mins ago" },
-      { name: "Loop prevention", copy: "Trigger handoff after three repeated clarification failures in one node.", lastTriggered: "1 hour ago" }
-    ]
-  }
-];
-
-export const releaseItems = [
-  {
-    version: "Support triage v1.9",
-    summary: "Updated retrieval tuning and escalation thresholds for hardware activation flows.",
-    status: "Canary 10%",
-    tone: "warning" as const,
-    agent: "Support triage",
-    traffic: "10% canary",
-    evalGate: "47/49 passed",
-    edited: "Today, 10:08"
-  },
-  {
-    version: "Billing concierge v2.3",
-    summary: "Published invoice-link delivery improvements and SMS fallback wording.",
-    status: "Production",
-    tone: "success" as const,
-    agent: "Billing concierge",
-    traffic: "100%",
-    evalGate: "51/51 passed",
-    edited: "Yesterday"
-  }
-];
-
-export const activeCalls = [
-  {
-    id: "live_1",
-    caller: "+1 212 555 0164",
-    agent: "Support triage",
-    phase: "Troubleshooting node",
-    status: "Listening",
-    tone: "success" as const,
-    duration: "05:12",
-    vendor: "AssemblyAI → Claude Sonnet → Cartesia",
-    sentiment: "Frustration medium"
-  },
-  {
-    id: "live_2",
-    caller: "+1 415 555 0188",
-    agent: "Billing concierge",
-    phase: "Invoice lookup",
-    status: "Tool running",
-    tone: "warning" as const,
-    duration: "02:08",
-    vendor: "Deepgram → GPT-4.1 → ElevenLabs",
-    sentiment: "Neutral"
-  },
-  {
-    id: "live_3",
-    caller: "+44 20 7946 0958",
-    agent: "Sales concierge",
-    phase: "Qualification",
-    status: "Speaking",
-    tone: "success" as const,
-    duration: "01:34",
-    vendor: "Deepgram → GPT-4.1 → Azure TTS",
-    sentiment: "Positive"
-  }
-];
-
-export const qaQueue = [
-  {
-    id: "qa_1",
-    caller: "+1 212 555 0164",
-    agent: "Support triage",
-    reason: "Escalated after unclear reset sequence",
-    priority: "High priority",
-    tone: "warning" as const,
-    note: "Candidate to become a regression scenario for activation-code ambiguity."
-  },
-  {
-    id: "qa_2",
-    caller: "+44 20 7946 0958",
-    agent: "Sales concierge",
-    reason: "Dropped during pricing explanation",
-    priority: "Needs review",
-    tone: "danger" as const,
-    note: "Review whether the first answer was too verbose before the line dropped."
-  }
-];
-
-export const analyticsMetrics = [
-  { label: "Task completion", value: "84.6%", change: "+3.2% WoW", trend: "up" as const },
-  { label: "Median response latency", value: "742ms", change: "-68ms WoW", trend: "up" as const },
-  { label: "Positive sentiment", value: "71%", change: "+4% WoW", trend: "up" as const },
-  { label: "Avg cost / call", value: "$0.84", change: "-$0.05 WoW", trend: "up" as const }
-];
-
-export const analyticsBreakdowns = [
-  {
-    title: "By agent",
-    rows: [
-      { label: "Billing concierge", value: "91% completion" },
-      { label: "Support triage", value: "76% completion" },
-      { label: "Sales concierge", value: "68% completion" }
-    ]
-  },
-  {
-    title: "By vendor stack",
-    rows: [
-      { label: "Deepgram / GPT-4.1 / ElevenLabs", value: "710ms median" },
-      { label: "AssemblyAI / Claude / Cartesia", value: "802ms median" },
-      { label: "Deepgram / GPT-4.1 / Azure TTS", value: "786ms median" }
-    ]
-  },
-  {
-    title: "By call type",
-    rows: [
-      { label: "Inbound support", value: "1,028 calls" },
-      { label: "Outbound billing", value: "164 calls" },
-      { label: "Sales qualification", value: "92 calls" }
-    ]
-  }
-];
-
-export const workspaceTenants = [
-  {
-    name: "Acme Health",
-    region: "US East",
-    owner: "Enterprise operations",
-    status: "Production",
-    tone: "success" as const,
-    volume: "12.8k",
-    stack: "Twilio / Deepgram / GPT-4.1 / ElevenLabs",
-    residency: "US only",
-    plan: "Enterprise"
-  },
-  {
-    name: "Pilot tenant",
-    region: "EU West",
-    owner: "Solutions engineering",
-    status: "Sandbox",
-    tone: "warning" as const,
-    volume: "640",
-    stack: "Telnyx / AssemblyAI / Claude / Cartesia",
-    residency: "EU pinned",
-    plan: "Pilot"
-  }
-];
-
-export const secretsStore = [
-  {
-    tenant: "Acme Health",
-    description: "Production-scoped credentials with rotation tracking.",
-    keys: [
-      { name: "Twilio account SID", value: "ACf8••••••••3e1", status: "Validated", tone: "success" as const },
-      { name: "Deepgram API key", value: "dg_live_••••41af", status: "Validated", tone: "success" as const }
-    ]
-  },
-  {
-    tenant: "Pilot tenant",
-    description: "Sandbox credentials and regional overrides.",
-    keys: [
-      { name: "Telnyx SIP credential", value: "tel_sip_••••2a9d", status: "Needs rotation", tone: "warning" as const },
-      { name: "Claude API key", value: "sk-ant-••••93kf", status: "Pending validation", tone: "danger" as const }
-    ]
-  }
-];
-
-export const compliancePolicies = [
-  {
-    title: "Consent & recording",
-    copy: "Model jurisdiction-aware consent prompts and recording rules.",
-    status: "Configured",
-    tone: "success" as const,
-    items: ["Two-party consent warning enabled for regulated flows", "Disable recording when policy flag is present"]
-  },
-  {
-    title: "Retention & redaction",
-    copy: "Control transcript lifetime and sensitive data handling.",
-    status: "Reviewing",
-    tone: "warning" as const,
-    items: ["PII redaction before long-term storage", "Auto-delete recordings after 90 days for pilot tenants"]
-  },
-  {
-    title: "Outbound policy",
-    copy: "Prepare calling windows, opt-outs, and compliance guardrails.",
+    id: "agent_reactivation",
+    name: "Pipeline reactivation",
+    description: "Re-engages stale opportunities, updates disposition, and books a human follow-up when intent returns.",
     status: "Draft",
-    tone: "danger" as const,
-    items: ["Timezone-aware calling windows", "DNC sync required before outbound campaign launch"]
+    statusTone: "warning",
+    lastEdited: "Yesterday",
+    segment: "Outbound recovery",
+    goal: "Recover dormant opportunities and route promising accounts to the right follow-up.",
+    stack: { stt: "AssemblyAI", llm: "GPT-4.1", tts: "Cartesia" },
+    flowNodes: createFlowNodes("Pipeline reactivation").map((node) =>
+      node.id === "follow_up"
+        ? { ...node, state: "Reactivation cadence", prompt: "Capture why timing failed previously and tee up the right human follow-up." }
+        : node
+    ),
+    flowEdges: defaultEdges,
+    toolsCatalog: [
+      { id: "crm_lookup", name: "CRM lookup", description: "Recover prior opportunity history and ownership.", enabled: true },
+      { id: "task_create", name: "Task creation", description: "Create the next touchpoint automatically.", enabled: true },
+      { id: "calendar_hold", name: "Calendar booking", description: "Book calls only for re-qualified opportunities.", enabled: false },
+      { id: "retry_schedule", name: "Retry scheduling", description: "Set compliant retry windows for no-answer outcomes.", enabled: true }
+    ],
+    knowledgeSources: [
+      { id: "kb_brand", name: "Brand overview", description: "Updated value proposition and market examples.", status: "Connected", enabled: true },
+      { id: "kb_reactivation", name: "Reactivation scripts", description: "Lightweight openers and objection responses.", status: "Connected", enabled: true }
+    ]
+  },
+  {
+    id: "agent_multistep",
+    name: "General conversion desk",
+    description: "A generic calling workflow for qualification, conversion, and handoff across multiple verticals.",
+    status: "Published",
+    statusTone: "success",
+    lastEdited: "3 days ago",
+    segment: "Cross-vertical",
+    goal: "Stay reusable across industries while still capturing structured outcomes.",
+    stack: { stt: "Deepgram", llm: "Claude Sonnet", tts: "ElevenLabs" },
+    flowNodes: createFlowNodes("General conversion desk"),
+    flowEdges: defaultEdges,
+    toolsCatalog: [
+      { id: "crm_lookup", name: "CRM lookup", description: "Bring prior context into the first turn.", enabled: true },
+      { id: "lead_score", name: "Lead scoring", description: "Produce a reusable qualification score.", enabled: true },
+      { id: "calendar_hold", name: "Calendar booking", description: "Book or transfer when qualified.", enabled: true },
+      { id: "summary_writeback", name: "Summary writeback", description: "Save structured call outcomes after completion.", enabled: true }
+    ],
+    knowledgeSources: [
+      { id: "kb_brand", name: "Brand overview", description: "Core positioning and product truth set.", status: "Connected", enabled: true },
+      { id: "kb_policy", name: "Calling policy", description: "Consent, retries, and safe operating rules.", status: "Connected", enabled: true }
+    ]
   }
 ];
+
+export const initialConnections: Connection[] = [
+  {
+    id: "conn_telephony",
+    name: "Telephony gateway",
+    category: "Telephony",
+    vendor: "Twilio",
+    description: "Inbound and outbound calling numbers plus voice transport.",
+    status: "Connected",
+    tone: "success",
+    detail: "2 numbers active, 1 sandbox line reserved.",
+    lastChecked: "Healthy 5 minutes ago"
+  },
+  {
+    id: "conn_crm",
+    name: "CRM sync",
+    category: "CRM",
+    vendor: "HubSpot",
+    description: "Account lookup, owner routing, and write-back after calls.",
+    status: "Connected",
+    tone: "success",
+    detail: "Lead lookup, owner sync, and timeline notes enabled.",
+    lastChecked: "Healthy 9 minutes ago"
+  },
+  {
+    id: "conn_calendar",
+    name: "Calendar scheduling",
+    category: "Calendar",
+    vendor: "Google Calendar",
+    description: "Books meetings and handoff slots from approved calendars.",
+    status: "Warning",
+    tone: "warning",
+    detail: "One host calendar needs refresh token rotation.",
+    lastChecked: "Warning 22 minutes ago"
+  },
+  {
+    id: "conn_knowledge",
+    name: "Knowledge sync",
+    category: "Knowledge",
+    vendor: "Notion",
+    description: "Pulls positioning, scripts, and workflow truth into the agent layer.",
+    status: "Needs setup",
+    tone: "neutral",
+    detail: "Knowledge sources are ready to be linked to the active workflow.",
+    lastChecked: "Not configured"
+  }
+];
+
+export const initialCallHistory: CallRecord[] = [
+  {
+    id: "call_101",
+    agentId: "agent_growth",
+    agentName: "Growth inbound",
+    leadName: "Maya Patel",
+    company: "Northstar Clinics",
+    phone: "+1 415 555 0188",
+    scenarioName: "Inbound qualification",
+    status: "Completed",
+    statusTone: "success",
+    duration: "04:12",
+    time: "Today, 09:42",
+    summary: "Qualified a multi-location healthcare prospect and booked a follow-up meeting.",
+    outcome: "Meeting booked",
+    nextStep: "Solutions call on Tue 11:00 AM PT.",
+    vendorTrace: "Deepgram -> GPT-4.1 -> ElevenLabs",
+    syncedToCrm: true,
+    extractedVariables: [
+      { key: "Lead score", value: "91 / 100" },
+      { key: "Seats", value: "6 clinics" },
+      { key: "Timeline", value: "Next quarter" }
+    ],
+    toolCalls: [
+      { name: "crm_lookup", result: "Existing owner matched" },
+      { name: "calendar_hold", result: "Meeting booked" }
+    ],
+    guardrails: ["Consent notice delivered", "PII redaction active"],
+    transcript: [
+      { speaker: "Lead", timestamp: "00:05", text: "We run six clinics and want to understand whether this can cover intake and follow-up." },
+      { speaker: "Voice", timestamp: "00:14", text: "It can. I will confirm your workflow, urgency, and next best step." },
+      { speaker: "Voice", timestamp: "03:57", text: "You are a strong fit. I booked the next meeting and sent the note to your owner." }
+    ]
+  },
+  {
+    id: "call_102",
+    agentId: "agent_reactivation",
+    agentName: "Pipeline reactivation",
+    leadName: "Jordan Lee",
+    company: "Peak Home Services",
+    phone: "+1 212 555 0164",
+    scenarioName: "Outbound reactivation",
+    status: "Follow-up",
+    statusTone: "warning",
+    duration: "03:38",
+    time: "Today, 08:17",
+    summary: "Recovered intent from a stalled opportunity but routed to a human AE for proof-heavy follow-up.",
+    outcome: "Follow-up",
+    nextStep: "AE follow-up queued with objections and expansion notes.",
+    vendorTrace: "AssemblyAI -> GPT-4.1 -> Cartesia",
+    syncedToCrm: false,
+    extractedVariables: [
+      { key: "Lead score", value: "74 / 100" },
+      { key: "Expansion", value: "2 markets" },
+      { key: "Buying confidence", value: "Needs proof" }
+    ],
+    toolCalls: [
+      { name: "crm_lookup", result: "Recovered dormant opportunity" },
+      { name: "task_create", result: "Assigned follow-up to AE" }
+    ],
+    guardrails: ["Do-not-call check passed", "Consent notice delivered"],
+    transcript: [
+      { speaker: "Lead", timestamp: "00:07", text: "Timing was wrong last year and my team still worries about trust." },
+      { speaker: "Voice", timestamp: "00:21", text: "I will keep this light and capture what changed." },
+      { speaker: "Voice", timestamp: "03:12", text: "I logged your concerns and assigned the next step to your account executive." }
+    ]
+  },
+  {
+    id: "call_103",
+    agentId: "agent_multistep",
+    agentName: "General conversion desk",
+    leadName: "Avery Brooks",
+    company: "Harbor Legal",
+    phone: "+1 646 555 0190",
+    scenarioName: "Voicemail recovery",
+    status: "Dropped",
+    statusTone: "danger",
+    duration: "00:42",
+    time: "Yesterday, 17:02",
+    summary: "Reached voicemail, left a compliant message, and scheduled an approved retry window.",
+    outcome: "Voicemail",
+    nextStep: "Retry tomorrow 10:00 AM local.",
+    vendorTrace: "Deepgram -> Claude Sonnet -> ElevenLabs",
+    syncedToCrm: true,
+    extractedVariables: [{ key: "Disposition", value: "Voicemail" }],
+    toolCalls: [
+      { name: "voicemail_log", result: "Voicemail captured" },
+      { name: "retry_schedule", result: "Retry scheduled" }
+    ],
+    guardrails: ["Calling window respected", "Voicemail disclaimer included"],
+    transcript: [
+      { speaker: "Voice", timestamp: "00:03", text: "Hi Avery, this is Voice calling with a quick follow-up on your inquiry." },
+      { speaker: "Voice", timestamp: "00:18", text: "I am sharing a callback note and will try again during the approved window." }
+    ]
+  }
+];
+
+export const initialNotifications: NotificationItem[] = [
+  {
+    id: "note_1",
+    title: "Calendar token needs review",
+    message: "One booking host is in warning state and should be reviewed before new meetings are confirmed.",
+    tone: "warning",
+    href: "/connections"
+  },
+  {
+    id: "note_2",
+    title: "Latest call synced",
+    message: "The latest qualification result was written to the CRM timeline.",
+    tone: "success",
+    href: "/calls"
+  }
+];
+
+export function createAgent(name: string): Agent {
+  const id = `agent_${name.toLowerCase().replace(/[^a-z0-9]+/g, "_")}_${Math.random().toString(36).slice(2, 6)}`;
+
+  return {
+    id,
+    name,
+    description: "New reusable voice workflow for routing, service, qualification, and follow-up.",
+    status: "Draft",
+    statusTone: "warning",
+    lastEdited: "Just now",
+    segment: "New workflow",
+    goal: "Shape the first working version of the workflow before production rollout.",
+    stack: { ...defaultStack },
+    flowNodes: createFlowNodes(name),
+    flowEdges: defaultEdges,
+    toolsCatalog: [
+      { id: "crm_lookup", name: "CRM lookup", description: "Pull existing lead history into the first turn.", enabled: true },
+      { id: "lead_score", name: "Lead scoring", description: "Convert conversation signals into a reusable score.", enabled: true },
+      { id: "calendar_hold", name: "Calendar booking", description: "Book the next step for qualified calls.", enabled: false },
+      { id: "task_create", name: "Task creation", description: "Assign the next human action when needed.", enabled: true }
+    ],
+    knowledgeSources: [
+      { id: "kb_brand", name: "Brand overview", description: "Core positioning and promise.", status: "Connected", enabled: true },
+      { id: "kb_policy", name: "Calling policy", description: "Consent and retry rules.", status: "Connected", enabled: true }
+    ]
+  };
+}
+
+export function getTimeLabel() {
+  return new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "2-digit"
+  }).format(new Date());
+}
+
+function toTimestamp(index: number) {
+  return `0${Math.min(index + 1, 9)}:${(index * 14 + 5).toString().padStart(2, "0")}`;
+}
+
+export function createActiveCall({
+  agent,
+  scenario,
+  leadName,
+  company,
+  phone
+}: {
+  agent: Agent;
+  scenario: DemoScenario;
+  leadName: string;
+  company: string;
+  phone: string;
+}): ActiveCall {
+  const transcript = scenario.transcriptSeed.slice(0, 1).map((item, index) => ({
+    ...item,
+    timestamp: toTimestamp(index)
+  }));
+
+  return {
+    id: `active_${Date.now()}`,
+    agentId: agent.id,
+    agentName: agent.name,
+    scenarioId: scenario.id,
+    scenarioName: scenario.name,
+    leadName,
+    company,
+    phone,
+    phaseIndex: 0,
+    phases: scenario.timeline,
+    timeline: [`${getTimeLabel()} • ${scenario.timeline[0]}`],
+    transcript,
+    extractedVariables: scenario.extractedVariables,
+    toolCalls: scenario.toolCalls,
+    guardrails: scenario.guardrails,
+    nextStep: scenario.nextStep
+  };
+}
+
+export function createCallRecord(call: ActiveCall, agent: Agent, scenario: DemoScenario): CallRecord {
+  const status = scenario.outcome === "Voicemail" ? "Dropped" : scenario.outcome === "Follow-up" ? "Follow-up" : "Completed";
+  const tone = status === "Completed" ? "success" : status === "Follow-up" ? "warning" : "danger";
+
+  return {
+    id: `call_${Date.now()}`,
+    agentId: call.agentId,
+    agentName: call.agentName,
+    leadName: call.leadName,
+    company: call.company,
+    phone: call.phone,
+    scenarioName: call.scenarioName,
+    status,
+    statusTone: tone,
+    duration: `0${call.phases.length}:1${call.transcript.length}`,
+    time: `Today, ${getTimeLabel()}`,
+    summary: `${scenario.summary} This run used the ${agent.name} workflow and completed the configured next-step routing.`,
+    outcome: scenario.outcome,
+    nextStep: scenario.nextStep,
+    vendorTrace: `${agent.stack.stt} -> ${agent.stack.llm} -> ${agent.stack.tts}`,
+    syncedToCrm: false,
+    extractedVariables: scenario.extractedVariables,
+    toolCalls: scenario.toolCalls,
+    guardrails: scenario.guardrails,
+    transcript: call.transcript
+  };
+}
+
+export function createConnection({
+  category,
+  vendor,
+  name
+}: {
+  category: Connection["category"];
+  vendor: string;
+  name: string;
+}): Connection {
+  return {
+    id: `conn_${Date.now()}`,
+    name,
+    category,
+    vendor,
+    description: `${vendor} connection for ${category.toLowerCase()} workflows.`,
+    status: "Connected",
+    tone: "success",
+    detail: `${vendor} was added and is ready for workflow setup.`,
+    lastChecked: `Healthy ${getTimeLabel()}`
+  };
+}

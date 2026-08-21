@@ -4,7 +4,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Voice",
-  description: "Frontend prototype for the Voice telephony SaaS platform"
+  description: "Voice is a multi-tenant telephony platform for building, operating, and governing AI calling workflows."
 };
 
 export default function RootLayout({
