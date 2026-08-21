@@ -1,0 +1,11 @@
+{
+  "name": "voice",
+  "private": true,
+  "workspaces": ["mock_design"],
+  "scripts": {
+    "dev": "npm --workspace mock_design run dev",
+    "build": "npm --workspace mock_design run build",
+    "start": "npm --workspace mock_design run start",
+    "check": "npm run build"
+  }
+}
