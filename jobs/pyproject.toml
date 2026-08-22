@@ -1,0 +1,22 @@
+[project]
+name = "voice-jobs"
+version = "0.1.0"
+description = "Voice async jobs and workers"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "fastapi>=0.115.0",
+  "pydantic-settings>=2.4.0",
+  "structlog>=24.4.0",
+  "temporalio>=1.7.0",
+  "uvicorn[standard]>=0.30.6",
+]
+
+[build-system]
+requires = ["hatchling>=1.25.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/voice_jobs"]
+
+[project.scripts]
+voice-jobs-dev = "voice_jobs.dev:main"

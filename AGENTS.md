@@ -14,6 +14,7 @@ Do not expand the architecture prematurely.
 4. Treat Notion as the PRD source of truth and Linear as the execution source of truth.
 5. No implementation should start before the plan is explicitly reviewed and approved.
 6. Every substantial change should end with verification notes: what was built, what was tested, what still needs manual review.
+7. Before any substantial change is marked complete, a review pass should happen from a senior SDE and tech-architect perspective.
 
 ## Working Process
 
@@ -24,7 +25,8 @@ Do not expand the architecture prematurely.
 5. Plan is approved
 6. Implementation starts
 7. Testing, review, and validation happen before handoff
-8. Manual product review happens before merge
+8. A review agent or equivalent structured review must happen after `lint` and `test`
+9. Manual product review happens before merge
 
 ## Repo Conventions
 

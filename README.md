@@ -14,14 +14,42 @@ The focus right now is:
 
 - `mock_design` — runnable Next.js mock product, design tokens, and iterative UX exploration
 - `frontend` — reserved for the eventual production frontend implementation
+- `backend` — FastAPI control plane scaffold
+- `pipeline` — realtime call runtime scaffold
+- `jobs` — async worker scaffold
+- `migrator` — Alembic migrations and local seed flows
 - `docs` — operating process, templates, and delivery rules
 - `skills` — reusable repo-local skill playbooks for planning and execution
 
 ## Quick Start
 
-1. Install dependencies from the repo root with `npm install`
-2. Start the mock design app with `npm run dev`
-3. Open `http://localhost:3000`
+1. Copy `.env.example` to `.env`
+2. Install Python dependencies with `make setup`
+3. Install Node dependencies with `make node-setup`
+4. Create or map Supabase Postgres environments for `dev` and `prod`, then place their connection strings in `.env`
+5. Install the Temporal CLI if needed, then start the local dev server with `make temporal-dev`
+6. Apply migrations with `make db-migrate ENV=dev`
+7. Seed the default admin workspace with `make db-seed ENV=dev`
+8. Verify Alembic head, required indexes, and seed health with `make db-verify ENV=dev`
+9. In separate terminals run `make backend ENV=dev`, `make pipeline ENV=dev`, `make jobs ENV=dev`, and `make mock`
+
+Local defaults after startup:
+
+- mock design: `http://localhost:3000`
+- backend: `http://localhost:8100/health`
+- pipeline: `http://localhost:8101/health`
+- jobs: `http://localhost:8102/health`
+- Temporal Web UI: `http://localhost:8233`
+
+## Environment Strategy
+
+- `VOICE_ENVIRONMENT=dev|test|prod` selects which database URL is active
+- `VOICE_DATABASE_URL` can override everything for one-off runs
+- `VOICE_DATABASE_URL_DEV`, `VOICE_DATABASE_URL_TEST`, and `VOICE_DATABASE_URL_PROD` hold your Supabase connection strings
+- `test` falls back to the `dev` database when its own URL is not set
+- `prod` still fails fast if its database URL is not configured
+- PostgreSQL connections automatically use the private `app_private` schema, so application tables stay out of Supabase's default `public` data API surface
+- Docker-backed local Postgres remains optional, but it is no longer the default path
 
 ## Product Delivery Loop
 
@@ -34,4 +62,4 @@ The focus right now is:
 7. Perform manual product review
 8. Approve and merge
 
-The current phase is design-first, with the full prototype living in `mock_design` and using mocked data only.
+The current phase is moving from design-first into a local-first implementation scaffold, while the full product mock still lives in `mock_design`.

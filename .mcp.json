@@ -2,6 +2,9 @@
   "mcpServers": {
     "penpot": {
       "url": "https://design.penpot.app/mcp/stream?userToken=eyJhbGciOiJBMjU2S1ciLCJlbmMiOiJBMjU2R0NNIn0.9tc9isMi5X5fNBIZGyIxAIV7hWEkdhVjd1cSp67HSZspAZy4XbnqKA.iTzGxeHt8kSgDKak.abRWLGD24zQDr-_ubd2e6j9JTrlQLpsn9XEFdUgEj1mtMVTUp9W49EiUYeHsZ537iyC7Eer-wcYhZoJpsXAbBnmjUD6n_hR3lnWNq2Z6EXJ_PzrPceO3nPs_lt1Iw-H7nhrHxc0M6uWfJj1sIKMJ_2j4yK83idxQMd8viFtsISipV0VWaJ4985_hded8xVd4JbF_oS_qsEWJ.xMu8VSXnLfR9MWA4d68JHg"
+    },
+    "supabase": {
+      "url": "https://mcp.supabase.com/mcp?features=docs%2Caccount%2Cdatabase%2Cdebugging%2Cdevelopment%2Cfunctions%2Cbranching%2Cstorage"
     }
   }
 }

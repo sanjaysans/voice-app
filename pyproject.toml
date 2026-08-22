@@ -1,0 +1,46 @@
+[project]
+name = "voice-workspace"
+version = "0.1.0"
+description = "Local-first workspace for the Voice platform"
+requires-python = ">=3.11,<3.13"
+dependencies = []
+
+[build-system]
+requires = ["hatchling>=1.25.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/voice_workspace"]
+
+[dependency-groups]
+dev = [
+  "httpx>=0.27.2",
+  "pytest>=8.3.2",
+  "pytest-asyncio>=0.24.0",
+  "ruff>=0.6.9",
+]
+
+[tool.uv.workspace]
+members = ["backend", "pipeline", "jobs", "migrator"]
+
+[tool.uv.sources]
+voice-backend = { workspace = true }
+
+[tool.pytest.ini_options]
+testpaths = ["backend/tests", "pipeline/tests", "jobs/tests", "migrator/tests"]
+pythonpath = ["backend/src", "pipeline/src", "jobs/src", "migrator/src"]
+addopts = ["--import-mode=importlib"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["mock_design/.next", "node_modules"]
+src = ["backend/src", "pipeline/src", "jobs/src", "migrator/src"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.ruff.lint]
+select = ["B", "E", "F", "I", "RUF", "UP"]
+ignore = ["E501"]

@@ -1,0 +1,25 @@
+[project]
+name = "voice-migrator"
+version = "0.1.0"
+description = "Voice database migrations and seeds"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "alembic>=1.13.2",
+  "pydantic-settings>=2.4.0",
+  "psycopg[binary]>=3.2.1",
+  "sqlalchemy>=2.0.34",
+  "structlog>=24.4.0",
+  "voice-backend>=0.1.0",
+]
+
+[build-system]
+requires = ["hatchling>=1.25.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/voice_migrator"]
+
+[project.scripts]
+voice-migrate = "voice_migrator.cli:main"
+voice-seed = "voice_migrator.seed:main"
+voice-db-verify = "voice_migrator.verify:main"
