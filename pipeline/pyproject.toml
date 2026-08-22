@@ -5,7 +5,7 @@ description = "Voice realtime call pipeline"
 requires-python = ">=3.11,<3.13"
 dependencies = [
   "fastapi>=0.115.0",
-  "livekit-agents>=1.5.4",
+  "livekit-agents[cartesia,deepgram,openai,silero]>=1.5.4",
   "pydantic-settings>=2.4.0",
   "structlog>=24.4.0",
   "uvicorn[standard]>=0.30.6",
@@ -20,3 +20,4 @@ packages = ["src/voice_pipeline"]
 
 [project.scripts]
 voice-pipeline-dev = "voice_pipeline.dev:main"
+voice-pipeline-worker = "voice_pipeline.interfaces.livekit.worker:main"

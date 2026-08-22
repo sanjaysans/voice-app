@@ -41,6 +41,34 @@ class Settings(BaseSettings):
         ],
         validation_alias=AliasChoices("VOICE_BACKEND_CORS_ORIGINS"),
     )
+    pipeline_base_url: str = Field(
+        default="http://127.0.0.1:8101",
+        validation_alias=AliasChoices("VOICE_PIPELINE_BASE_URL"),
+    )
+    livekit_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("VOICE_LIVEKIT_URL"),
+    )
+    livekit_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("VOICE_LIVEKIT_API_KEY"),
+    )
+    livekit_api_secret: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("VOICE_LIVEKIT_API_SECRET"),
+    )
+    livekit_agent_name: str = Field(
+        default="voice-router-agent",
+        validation_alias=AliasChoices("VOICE_LIVEKIT_AGENT_NAME"),
+    )
+    livekit_room_empty_timeout_seconds: int = Field(
+        default=600,
+        validation_alias=AliasChoices("VOICE_LIVEKIT_ROOM_EMPTY_TIMEOUT_SECONDS"),
+    )
+    livekit_token_ttl_minutes: int = Field(
+        default=60,
+        validation_alias=AliasChoices("VOICE_LIVEKIT_TOKEN_TTL_MINUTES"),
+    )
     database_url: str | None = Field(
         default=None,
         validation_alias=AliasChoices("VOICE_DATABASE_URL"),
@@ -85,11 +113,34 @@ class Settings(BaseSettings):
                 raise ValueError("VOICE_SESSION_SECRET must be configured for production")
             object.__setattr__(resolved, "session_secret", "voice-local-dev-session-secret")
 
+        livekit_url = resolved.livekit_url.strip() if isinstance(resolved.livekit_url, str) else None
+        livekit_api_key = (
+            resolved.livekit_api_key.strip()
+            if isinstance(resolved.livekit_api_key, str)
+            else None
+        )
+        livekit_api_secret = (
+            resolved.livekit_api_secret.strip()
+            if isinstance(resolved.livekit_api_secret, str)
+            else None
+        )
+        if resolved.environment != "prod":
+            livekit_url = livekit_url or "ws://127.0.0.1:7880"
+            livekit_api_key = livekit_api_key or "devkey"
+            livekit_api_secret = livekit_api_secret or "secret"
+
+        object.__setattr__(resolved, "livekit_url", livekit_url)
+        object.__setattr__(resolved, "livekit_api_key", livekit_api_key)
+        object.__setattr__(resolved, "livekit_api_secret", livekit_api_secret)
         return resolved
 
     @property
     def database_dsn(self) -> str:
         return (self.database_url or DEFAULT_DATABASE_URL).replace("+psycopg", "")
+
+    @property
+    def livekit_configured(self) -> bool:
+        return bool(self.livekit_url and self.livekit_api_key and self.livekit_api_secret)
 
 
 @lru_cache(maxsize=1)

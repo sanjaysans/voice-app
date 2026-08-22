@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useMockApp } from "@/lib/mock-app";
 import { api } from "@/lib/api-client";
-import { Badge, Card, PageHeader } from "@/components/ui";
+import { Badge, Card, ContentLoader, PageHeader } from "@/components/ui";
 
 type ProviderAccountRecord = {
   provider_account_id: string;
@@ -23,9 +23,17 @@ async function fetchAccounts(tenantSlug: string) {
 export default function SecretsPage() {
   const { tenantSlug } = useMockApp();
   const [accounts, setAccounts] = useState<ProviderAccountRecord[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    void fetchAccounts(tenantSlug).then(setAccounts);
+    void (async () => {
+      setIsLoading(true);
+      try {
+        setAccounts(await fetchAccounts(tenantSlug));
+      } finally {
+        setIsLoading(false);
+      }
+    })();
   }, [tenantSlug]);
 
   return (
@@ -36,6 +44,14 @@ export default function SecretsPage() {
         description="A safe inventory of configured secret-bearing integrations without exposing actual credential values."
       />
 
+      {isLoading ? (
+        <ContentLoader
+          title="Loading secrets inventory"
+          description="Fetching configured secret-bearing integrations without exposing credential values."
+        />
+      ) : null}
+
+      {!isLoading ? (
       <Card>
         <div className="space-y-3">
           {accounts.map((account) => (
@@ -67,6 +83,7 @@ export default function SecretsPage() {
           ))}
         </div>
       </Card>
+      ) : null}
     </div>
   );
 }

@@ -1,12 +1,16 @@
 import uuid
 
-from httpx import ASGITransport, AsyncClient
-
 import pytest
+from httpx import ASGITransport, AsyncClient
 
 from voice_backend.app import create_app
 from voice_backend.database import get_request_session
-from voice_backend.security import create_session_token, decode_session_token, hash_password, verify_password
+from voice_backend.security import (
+    create_session_token,
+    decode_session_token,
+    hash_password,
+    verify_password,
+)
 from voice_backend.services.authentication import AuthenticationService
 
 
@@ -32,7 +36,9 @@ def test_session_token_round_trip() -> None:
     assert payload.expires_at == 160
 
 
-def test_authentication_service_returns_session_for_valid_credentials(session, seeded_domain) -> None:
+def test_authentication_service_returns_session_for_valid_credentials(
+    session, seeded_domain
+) -> None:
     auth_session = AuthenticationService(session).authenticate(
         seeded_domain["user"].email,
         "voice-demo-password",

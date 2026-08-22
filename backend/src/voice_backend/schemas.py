@@ -241,6 +241,7 @@ class AgentStudioRecord(BaseModel):
     segment: str
     goal: str
     stack: VendorStackRecord
+    runtime_profile: dict[str, object] = Field(default_factory=dict)
     flow_nodes: list[FlowNodeRecord]
     flow_edges: list[tuple[str, str]]
     tools_catalog: list[AgentToolRecord]
@@ -257,6 +258,7 @@ class AgentStudioUpdateInput(BaseModel):
     segment: str | None = None
     goal: str | None = None
     stack: VendorStackRecord | None = None
+    runtime_profile: dict[str, object] | None = None
     flow_nodes: list[FlowNodeRecord] | None = None
     flow_edges: list[tuple[str, str]] | None = None
     tools_catalog: list[AgentToolRecord] | None = None
@@ -329,6 +331,104 @@ class WorkspaceAppState(BaseModel):
     agents: list[AgentStudioRecord]
     connections: list[ConnectionRecord]
     calls: list[CallReviewRecord]
+
+
+class BrowserRtcPromptInput(BaseModel):
+    system_prompt: str = Field(
+        default=(
+            "You are a helpful voice agent. Listen carefully, respond clearly, "
+            "and confirm important details before closing the conversation."
+        )
+    )
+    opening_message: str | None = None
+
+
+class BrowserRtcRoomInput(BaseModel):
+    room_name: str | None = None
+    participant_identity: str | None = None
+    text_input_enabled: bool = True
+    audio_input_enabled: bool = True
+    audio_output_enabled: bool = True
+    text_output_enabled: bool = True
+    sync_transcription: bool = True
+    auto_gain_control: bool = True
+    pre_connect_audio: bool = True
+    close_on_disconnect: bool = True
+    delete_room_on_close: bool = False
+
+
+class BrowserRtcDeepgramInput(BaseModel):
+    api_key: str
+    model: str = "flux-general-en"
+    language: str = "en-US"
+    detect_language: bool = False
+    interim_results: bool = True
+    punctuate: bool = True
+    smart_format: bool = True
+    endpointing_ms: int = 25
+    utterance_end_ms: int | None = None
+    eager_eot_threshold: float | None = 0.4
+    eot_threshold: float | None = None
+    keywords: list[str] = Field(default_factory=list)
+    keyterms: list[str] = Field(default_factory=list)
+    enable_diarization: bool = False
+
+
+class BrowserRtcOpenAiInput(BaseModel):
+    api_key: str
+    model: str = "gpt-4.1-mini"
+    temperature: float = 0.2
+    max_output_tokens: int | None = 500
+    base_url: str | None = None
+    user: str | None = None
+
+
+class BrowserRtcCartesiaInput(BaseModel):
+    api_key: str
+    model: str = "sonic-3"
+    voice: str = "f786b574-daa5-4673-aa0c-cbe3e8534c02"
+    language: str = "en"
+    speed: float | None = None
+    emotion: str | list[str] | None = None
+    volume: float | None = None
+    sample_rate: int = 24000
+
+
+class BrowserRtcVadInput(BaseModel):
+    min_speech_duration: float = 0.05
+    min_silence_duration: float = 0.55
+    prefix_padding_duration: float = 0.5
+    max_buffered_speech: float = 60.0
+    activation_threshold: float = 0.5
+    sample_rate: Literal[8000, 16000] = 16000
+
+
+class BrowserRtcSessionCreateInput(BaseModel):
+    session_id: str | None = None
+    pipeline_mode: PipelineMode = "stt_llm_tts"
+    dispatch_agent_name: str = "voice-router-agent"
+    prompt: BrowserRtcPromptInput = Field(default_factory=BrowserRtcPromptInput)
+    room: BrowserRtcRoomInput = Field(default_factory=BrowserRtcRoomInput)
+    stt: BrowserRtcDeepgramInput
+    llm: BrowserRtcOpenAiInput
+    tts: BrowserRtcCartesiaInput
+    vad: BrowserRtcVadInput = Field(default_factory=BrowserRtcVadInput)
+    metadata: dict[str, str] = Field(default_factory=dict)
+    participant_name: str | None = None
+
+
+class BrowserRtcSessionRecord(BaseModel):
+    room_name: str
+    participant_identity: str
+    participant_name: str
+    server_url: str
+    access_token: str
+    dispatch_id: str
+    dispatch_agent_name: str
+    session: dict[str, object]
+    runtime: dict[str, object]
+    warnings: list[str]
+    errors: list[str]
 
 
 class TeamMemberRecord(BaseModel):

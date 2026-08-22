@@ -7,8 +7,8 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.dialects.postgresql import insert
 
 from voice_backend.models import Base
-from voice_backend.security import hash_password
 from voice_backend.schema import build_engine_connect_args, configure_engine
+from voice_backend.security import hash_password
 from voice_migrator.config import get_settings
 from voice_migrator.logging import configure_logging, get_logger
 
@@ -319,7 +319,7 @@ def build_demo_calls(tenant_id, workspace_id, agent_definition_rows) -> list[dic
                 ],
                 "guardrails": ["PII confirmation", "Escalation path available"],
                 "transcript": [
-                    {"speaker": "Lead", "timestamp": "00:12", "text": "We’re evaluating vendors this month."},
+                    {"speaker": "Lead", "timestamp": "00:12", "text": "We're evaluating vendors this month."},
                     {"speaker": "Voice", "timestamp": "00:25", "text": "I can help qualify the fit and book the next step."},
                 ],
             },
@@ -360,7 +360,7 @@ def build_demo_calls(tenant_id, workspace_id, agent_definition_rows) -> list[dic
                 "guardrails": ["No pricing promises", "Logged callback request"],
                 "transcript": [
                     {"speaker": "Lead", "timestamp": "00:09", "text": "We need one more internal review before committing."},
-                    {"speaker": "Voice", "timestamp": "00:31", "text": "I’ll log that and set up the next callback window."},
+                    {"speaker": "Voice", "timestamp": "00:31", "text": "I'll log that and set up the next callback window."},
                 ],
             },
         },
@@ -473,16 +473,18 @@ def main() -> None:
             .on_conflict_do_nothing(index_elements=["tenant_id", "workspace_id", "user_id"])
         )
 
-        default_provider_rows = build_default_provider_rows(tenant_id)
-
-        for row in default_provider_rows:
-            connection.execute(
-                insert(provider_accounts_table)
-                .values(**row)
-                .on_conflict_do_nothing(index_elements=["tenant_id", "provider_kind", "label"])
-            )
-
         if settings.seed_mode == "demo":
+            default_provider_rows = build_default_provider_rows(tenant_id)
+
+            for row in default_provider_rows:
+                connection.execute(
+                    insert(provider_accounts_table)
+                    .values(**row)
+                    .on_conflict_do_nothing(
+                        index_elements=["tenant_id", "provider_kind", "label"]
+                    )
+                )
+
             for row in build_demo_connection_rows(tenant_id):
                 connection.execute(
                     insert(provider_accounts_table)

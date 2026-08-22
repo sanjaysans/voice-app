@@ -96,16 +96,18 @@ export default function LoginPage() {
             <Button
               className="w-full justify-center"
               disabled={isCheckingSession || isSubmitting}
+              loading={isCheckingSession || isSubmitting}
+              loadingText={isCheckingSession ? "Checking session..." : "Signing in..."}
               size="lg"
               type="submit"
             >
-              {isCheckingSession ? "Checking session..." : isSubmitting ? "Signing in..." : "Continue to workspace"}
+              Continue to Voice
               <ArrowRight size={16} />
             </Button>
           </form>
 
           <div className="mt-6 rounded-2xl border border-border bg-[#fafafe] p-4">
-            <p className="text-sm font-medium text-[#17171F]">Workspace note</p>
+            <p className="text-sm font-medium text-[#17171F]">Operator note</p>
             <p className="mt-1 text-sm leading-6 text-[#6D6D78]">
               Sign in to review active workflows, call activity, and connection health.
             </p>
@@ -120,7 +122,7 @@ export default function LoginPage() {
             Multi-vendor voice infrastructure, designed for operators who need speed and control.
           </h2>
           <p className="mt-5 max-w-lg text-sm leading-7 text-[rgba(255,255,255,0.72)]">
-            Build, route, observe, and troubleshoot telephony agents across STT, LLM, TTS, and carrier providers from one workspace.
+            Build, route, observe, and troubleshoot telephony agents across STT, LLM, TTS, and carrier providers from one operating surface.
           </p>
         </div>
 

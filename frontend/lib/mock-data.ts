@@ -1,3 +1,5 @@
+import { buildDefaultRuntimeProfile, type AgentRuntimeProfile } from "@/lib/voice-stack";
+
 export type Tone = "neutral" | "success" | "warning" | "danger";
 
 export type VendorStack = {
@@ -44,6 +46,7 @@ export type Agent = {
   segment: string;
   goal: string;
   stack: VendorStack;
+  runtimeProfile: AgentRuntimeProfile;
   flowNodes: FlowNode[];
   flowEdges: Array<[string, string]>;
   toolsCatalog: AgentTool[];
@@ -123,7 +126,14 @@ export type CallRecord = {
 export type Connection = {
   id: string;
   name: string;
-  category: "Telephony" | "CRM" | "Calendar" | "Knowledge";
+  category:
+    | "Telephony"
+    | "Speech to text"
+    | "Reasoning"
+    | "Text to speech"
+    | "CRM"
+    | "Calendar"
+    | "Knowledge";
   vendor: string;
   description: string;
   status: "Connected" | "Needs setup" | "Warning";
@@ -150,7 +160,7 @@ export const rangeMultipliers = {
 const defaultStack: VendorStack = {
   stt: "Deepgram",
   llm: "GPT-4.1",
-  tts: "ElevenLabs"
+  tts: "Cartesia"
 };
 
 export const dateRanges = ["Today", "7D", "30D", "Quarter"];
@@ -355,6 +365,7 @@ export const initialAgents: Agent[] = [
     segment: "Inbound acquisition",
     goal: "Qualify high-intent callers and route them to the next best action.",
     stack: { ...defaultStack },
+    runtimeProfile: buildDefaultRuntimeProfile(),
     flowNodes: createFlowNodes("Growth inbound"),
     flowEdges: defaultEdges,
     toolsCatalog: [
@@ -378,7 +389,8 @@ export const initialAgents: Agent[] = [
     lastEdited: "Yesterday",
     segment: "Outbound recovery",
     goal: "Recover dormant opportunities and route promising accounts to the right follow-up.",
-    stack: { stt: "AssemblyAI", llm: "GPT-4.1", tts: "Cartesia" },
+    stack: { stt: "Deepgram", llm: "GPT-4.1", tts: "Cartesia" },
+    runtimeProfile: buildDefaultRuntimeProfile(),
     flowNodes: createFlowNodes("Pipeline reactivation").map((node) =>
       node.id === "follow_up"
         ? { ...node, state: "Reactivation cadence", prompt: "Capture why timing failed previously and tee up the right human follow-up." }
@@ -405,7 +417,8 @@ export const initialAgents: Agent[] = [
     lastEdited: "3 days ago",
     segment: "Cross-vertical",
     goal: "Stay reusable across industries while still capturing structured outcomes.",
-    stack: { stt: "Deepgram", llm: "Claude Sonnet", tts: "ElevenLabs" },
+    stack: { stt: "Deepgram", llm: "GPT-4.1", tts: "Cartesia" },
+    runtimeProfile: buildDefaultRuntimeProfile(),
     flowNodes: createFlowNodes("General conversion desk"),
     flowEdges: defaultEdges,
     toolsCatalog: [
@@ -484,7 +497,7 @@ export const initialCallHistory: CallRecord[] = [
     summary: "Qualified a multi-location healthcare prospect and booked a follow-up meeting.",
     outcome: "Meeting booked",
     nextStep: "Solutions call on Tue 11:00 AM PT.",
-    vendorTrace: "Deepgram -> GPT-4.1 -> ElevenLabs",
+    vendorTrace: "Deepgram -> GPT-4.1 -> Cartesia",
     syncedToCrm: true,
     extractedVariables: [
       { key: "Lead score", value: "91 / 100" },
@@ -517,7 +530,7 @@ export const initialCallHistory: CallRecord[] = [
     summary: "Recovered intent from a stalled opportunity but routed to a human AE for proof-heavy follow-up.",
     outcome: "Follow-up",
     nextStep: "AE follow-up queued with objections and expansion notes.",
-    vendorTrace: "AssemblyAI -> GPT-4.1 -> Cartesia",
+    vendorTrace: "Deepgram -> GPT-4.1 -> Cartesia",
     syncedToCrm: false,
     extractedVariables: [
       { key: "Lead score", value: "74 / 100" },
@@ -550,7 +563,7 @@ export const initialCallHistory: CallRecord[] = [
     summary: "Reached voicemail, left a compliant message, and scheduled an approved retry window.",
     outcome: "Voicemail",
     nextStep: "Retry tomorrow 10:00 AM local.",
-    vendorTrace: "Deepgram -> Claude Sonnet -> ElevenLabs",
+    vendorTrace: "Deepgram -> GPT-4.1 -> Cartesia",
     syncedToCrm: true,
     extractedVariables: [{ key: "Disposition", value: "Voicemail" }],
     toolCalls: [
@@ -578,7 +591,7 @@ export const initialNotifications: NotificationItem[] = [
     title: "Latest call synced",
     message: "The latest qualification result was written to the CRM timeline.",
     tone: "success",
-    href: "/calls"
+    href: "/calls/logs"
   }
 ];
 
@@ -595,6 +608,7 @@ export function createAgent(name: string): Agent {
     segment: "New workflow",
     goal: "Shape the first working version of the workflow before production rollout.",
     stack: { ...defaultStack },
+    runtimeProfile: buildDefaultRuntimeProfile(),
     flowNodes: createFlowNodes(name),
     flowEdges: defaultEdges,
     toolsCatalog: [

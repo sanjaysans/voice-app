@@ -37,6 +37,18 @@ Keep implementation quality high from the first real code commit without making 
 - shared helpers with unclear ownership
 - circular imports between runtime layers
 
+## Frontend standards
+
+- use shared UI primitives before adding page-local controls
+- no browser-native `<select>` in product UI; use the shared dropdown component
+- async actions must show a loading state and disable repeat clicks while pending
+- row actions should prefer keyed pending state so only the affected row locks
+- full-page or surface-blocking loaders are reserved for collection rebuilds, context changes, or actions that materially refresh the current view
+- in-place mutations such as health checks or row updates should keep loading scoped to the triggering control whenever the surrounding UI can remain interactive
+- destructive or irreversible actions must require a confirmation modal before the API call begins
+- create, save, and standard edit flows should not add confirmation friction unless the action is destructive
+- keep shell chrome quiet; avoid stacking low-value buttons into the header
+
 ## Comment style
 
 Use comments only for:

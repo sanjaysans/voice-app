@@ -189,6 +189,8 @@ class AgentDefinitionAdminService:
             ]
         if payload.stack is not None:
             vendor_config["stack"] = payload.stack.model_dump()
+        if payload.runtime_profile is not None:
+            vendor_config["runtime_profile"] = payload.runtime_profile
         published_at = (
             datetime.now(UTC) if payload.status == "published" else latest_version.published_at
         )

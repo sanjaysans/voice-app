@@ -15,7 +15,6 @@ import {
   dateRanges,
   demoScenarios,
   getTimeLabel,
-  initialNotifications,
   type ActiveCall,
   type Agent,
   type CallRecord,
@@ -24,9 +23,18 @@ import {
   type NotificationItem,
 } from "@/lib/mock-data";
 import { ApiError, api } from "@/lib/api-client";
+import {
+  buildDefaultRuntimeProfile,
+  getProviderLabel,
+  parsePhoneNumbers,
+  resolveProviderHealthCheckEndpoint,
+  type AgentRuntimeProfile,
+  type ProviderAccountRecord,
+  type SupportedProviderKind,
+} from "@/lib/voice-stack";
 import { Button } from "@/components/ui";
 
-type CallsView = "launch" | "live" | "review";
+type CallsView = "launch" | "live";
 
 type MockAppContextValue = {
   currentUser: {
@@ -43,6 +51,7 @@ type MockAppContextValue = {
   selectedAgentId: string;
   selectedAgent: Agent | null;
   connections: Connection[];
+  providerAccounts: ProviderAccountRecord[];
   activeCall: ActiveCall | null;
   callHistory: CallRecord[];
   selectedCallId: string;
@@ -76,18 +85,19 @@ type MockAppContextValue = {
   updateConnection: (
     connectionId: string,
     payload: {
-      category: Connection["category"];
-      vendor: string;
-      name: string;
-      description: string;
-      status: Connection["status"];
-      detail: string;
+      providerKind: SupportedProviderKind;
+      vendorName: string;
+      label: string;
+      status: "draft" | "active" | "inactive" | "error" | "configured";
+      config: Record<string, unknown>;
     }
   ) => Promise<void>;
   addConnection: (payload: {
-    category: Connection["category"];
-    vendor: string;
-    name: string;
+    providerKind: SupportedProviderKind;
+    vendorName: string;
+    label: string;
+    status: "draft" | "active" | "inactive" | "error" | "configured";
+    config: Record<string, unknown>;
   }) => Promise<void>;
   deleteConnection: (connectionId: string) => Promise<void>;
   startCall: (payload: {
@@ -130,18 +140,18 @@ type AgentStudioResponse = {
   knowledge_sources: Agent["knowledgeSources"];
   latest_version_number: number | null;
   latest_pipeline_mode: string | null;
+  runtime_profile?: AgentRuntimeProfile;
 };
 
-type ConnectionResponse = {
+type ProviderAccountResponse = {
   provider_account_id: string;
-  category: Connection["category"];
-  name: string;
-  vendor: string;
-  description: string;
-  status: Connection["status"];
-  tone: Connection["tone"];
-  detail: string;
-  last_checked: string;
+  provider_kind: SupportedProviderKind;
+  vendor_name: string;
+  label: string;
+  status: "draft" | "active" | "inactive" | "error" | "configured";
+  has_config: boolean;
+  config_keys: string[];
+  preview: Record<string, unknown>;
 };
 
 type CallResponse = {
@@ -170,7 +180,6 @@ type CallResponse = {
 type AppStateResponse = {
   workspace: WorkspaceRecord;
   agents: AgentStudioResponse[];
-  connections: ConnectionResponse[];
   calls: CallResponse[];
 };
 
@@ -220,6 +229,66 @@ function mapProviderKind(category: Connection["category"]) {
   }
 }
 
+function toProviderAccount(response: ProviderAccountResponse): ProviderAccountRecord {
+  return {
+    id: response.provider_account_id,
+    providerKind: response.provider_kind,
+    vendorName: response.vendor_name,
+    label: response.label,
+    status: response.status,
+    hasConfig: response.has_config,
+    configKeys: response.config_keys,
+    preview: response.preview,
+  };
+}
+
+function providerKindToCategory(kind: SupportedProviderKind): Connection["category"] {
+  switch (kind) {
+    case "telephony":
+      return "Telephony";
+    case "stt":
+      return "Speech to text";
+    case "llm":
+      return "Reasoning";
+    case "tts":
+      return "Text to speech";
+  }
+}
+
+function statusFromProviderAccount(account: ProviderAccountRecord): Connection["status"] {
+  const uiStatus = String(account.preview.ui_status || "").trim();
+  if (uiStatus === "Connected") {
+    return "Connected";
+  }
+  if (uiStatus === "Warning") {
+    return "Warning";
+  }
+  return account.status === "active" || account.status === "configured"
+    ? "Connected"
+    : account.status === "error"
+      ? "Warning"
+      : "Needs setup";
+}
+
+function toneFromConnectionStatus(status: Connection["status"]): Connection["tone"] {
+  return status === "Connected" ? "success" : status === "Warning" ? "warning" : "neutral";
+}
+
+function toConnectionFromProviderAccount(account: ProviderAccountRecord): Connection {
+  const status = statusFromProviderAccount(account);
+  return {
+    id: account.id,
+    name: account.label,
+    category: providerKindToCategory(account.providerKind),
+    vendor: getProviderLabel(account.providerKind, account.vendorName),
+    description: `${getProviderLabel(account.providerKind, account.vendorName)} ${account.providerKind} connection`,
+    status,
+    tone: toneFromConnectionStatus(status),
+    detail: String(account.preview.detail || "Connection ready for setup."),
+    lastChecked: String(account.preview.last_checked || "Not configured"),
+  };
+}
+
 function toAgent(response: AgentStudioResponse): Agent {
   return {
     id: response.agent_id,
@@ -231,24 +300,11 @@ function toAgent(response: AgentStudioResponse): Agent {
     segment: response.segment,
     goal: response.goal,
     stack: response.stack,
+    runtimeProfile: response.runtime_profile ?? buildDefaultRuntimeProfile(),
     flowNodes: response.flow_nodes,
     flowEdges: response.flow_edges,
     toolsCatalog: response.tools_catalog,
     knowledgeSources: response.knowledge_sources,
-  };
-}
-
-function toConnection(response: ConnectionResponse): Connection {
-  return {
-    id: response.provider_account_id,
-    name: response.name,
-    category: response.category,
-    vendor: response.vendor,
-    description: response.description,
-    status: response.status,
-    tone: response.tone,
-    detail: response.detail,
-    lastChecked: response.last_checked,
   };
 }
 
@@ -286,14 +342,20 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState("");
   const [connections, setConnections] = useState<Connection[]>([]);
+  const [providerAccounts, setProviderAccounts] = useState<ProviderAccountRecord[]>([]);
   const [activeCall, setActiveCall] = useState<ActiveCall | null>(null);
   const [callHistory, setCallHistory] = useState<CallRecord[]>([]);
   const [selectedCallId, setSelectedCallId] = useState("");
   const [callsView, setCallsView] = useState<CallsView>("launch");
-  const [notifications, setNotifications] = useState(initialNotifications);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [dateRange, setDateRange] = useState(dateRanges[1]);
   const [isReady, setIsReady] = useState(false);
   const [bootstrapError, setBootstrapError] = useState("");
+
+  function applyProviderAccounts(nextProviderAccounts: ProviderAccountRecord[]) {
+    setProviderAccounts(nextProviderAccounts);
+    setConnections(nextProviderAccounts.map(toConnectionFromProviderAccount));
+  }
 
   async function resolveSession(preferredWorkspaceId?: string): Promise<{
     currentUser: NonNullable<MockAppContextValue["currentUser"]>;
@@ -342,20 +404,24 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
     if (!currentTenantSlug || !currentWorkspaceId) {
       setAgents([]);
       setConnections([]);
+      setProviderAccounts([]);
       setCallHistory([]);
       setSelectedAgentId("");
       setSelectedCallId("");
       return;
     }
-    const state = await api<AppStateResponse>(
-      `/api/v1/tenants/${currentTenantSlug}/workspaces/${currentWorkspaceId}/app-state`
-    );
+    const [state, accounts] = await Promise.all([
+      api<AppStateResponse>(
+        `/api/v1/tenants/${currentTenantSlug}/workspaces/${currentWorkspaceId}/app-state`
+      ),
+      api<ProviderAccountResponse[]>(`/api/v1/tenants/${currentTenantSlug}/provider-accounts`),
+    ]);
     const nextAgents = state.agents.map(toAgent);
-    const nextConnections = state.connections.map(toConnection);
+    const nextProviderAccounts = accounts.map(toProviderAccount);
     const nextCalls = state.calls.map(toCallRecord);
 
     setAgents(nextAgents);
-    setConnections(nextConnections);
+    applyProviderAccounts(nextProviderAccounts);
     setCallHistory(nextCalls);
     setWorkspaceName(state.workspace.name);
     setSelectedAgentId((current) =>
@@ -368,9 +434,22 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
       tenant: currentTenantSlug,
       workspace: currentWorkspaceId,
       agents: nextAgents.length,
-      connections: nextConnections.length,
+      connections: nextProviderAccounts.length,
       calls: nextCalls.length,
     });
+  }
+
+  async function refreshProviderAccounts(context?: { tenantSlug: string }) {
+    const currentTenantSlug = context?.tenantSlug ?? tenantSlug;
+    if (!currentTenantSlug) {
+      applyProviderAccounts([]);
+      return;
+    }
+
+    const accounts = await api<ProviderAccountResponse[]>(
+      `/api/v1/tenants/${currentTenantSlug}/provider-accounts`
+    );
+    applyProviderAccounts(accounts.map(toProviderAccount));
   }
 
   async function loadWorkspace(preferredWorkspaceId?: string) {
@@ -381,6 +460,7 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
       setWorkspaceName("");
       setAgents([]);
       setConnections([]);
+      setProviderAccounts([]);
       setCallHistory([]);
       setSelectedAgentId("");
       setSelectedCallId("");
@@ -410,7 +490,7 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
           router.replace("/login");
           return;
         }
-        setBootstrapError("We couldn’t load the workspace. Check backend connectivity or reseed the environment, then retry.");
+        setBootstrapError("We couldn’t load the app context. Check backend connectivity or reseed the environment, then retry.");
         setIsReady(true);
         console.error("workspace initialization failed", error);
       }
@@ -465,7 +545,7 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
           const record = toCallRecord(created);
           await refreshState();
           setSelectedCallId(record.id);
-          setCallsView("review");
+          setCallsView("launch");
           setActiveCall(null);
           setNotifications((current) => [
             {
@@ -473,7 +553,7 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
               title: `${record.agentName} completed a call`,
               message: `${record.leadName} from ${record.company} is ready for review.`,
               tone: record.statusTone === "danger" ? "warning" : "success",
-              href: "/calls",
+              href: "/calls/logs",
             },
             ...current,
           ]);
@@ -533,6 +613,7 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
           segment: nextAgent.segment,
           goal: nextAgent.goal,
           stack: nextAgent.stack,
+          runtime_profile: nextAgent.runtimeProfile,
           flow_nodes: nextAgent.flowNodes,
           flow_edges: nextAgent.flowEdges,
           tools_catalog: nextAgent.toolsCatalog,
@@ -557,6 +638,7 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
       selectedAgentId,
       selectedAgent,
       connections,
+      providerAccounts,
       activeCall,
       callHistory,
       selectedCallId,
@@ -590,6 +672,7 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
                 },
                 vendor_config: {
                   stack: template.stack,
+                  runtime_profile: template.runtimeProfile,
                 },
               },
             }),
@@ -606,6 +689,7 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
               segment: template.segment,
               goal: template.goal,
               stack: template.stack,
+              runtime_profile: template.runtimeProfile,
               flow_nodes: template.flowNodes,
               flow_edges: template.flowEdges,
               tools_catalog: template.toolsCatalog,
@@ -709,83 +793,50 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
         ]);
       },
       toggleConnection: async (connectionId) => {
-        const current = connections.find((connection) => connection.id === connectionId);
+        const current = providerAccounts.find((connection) => connection.id === connectionId);
         if (!current) {
           return;
         }
-        const nextConnection =
-          current.status === "Connected"
-            ? {
-                ...current,
-                status: "Warning" as const,
-                tone: "warning" as const,
-                detail: `${current.vendor} health check surfaced an issue that needs review.`,
-                lastChecked: `Warning ${getTimeLabel()}`,
-              }
-            : {
-                ...current,
-                status: "Connected" as const,
-                tone: "success" as const,
-                detail: `${current.vendor} connection is healthy and ready for new traffic.`,
-                lastChecked: `Healthy ${getTimeLabel()}`,
-              };
-        await api(`/api/v1/tenants/${tenantSlug}/provider-accounts/${connectionId}`, {
-          method: "PATCH",
-          body: JSON.stringify({
-            status: nextConnection.status === "Connected" ? "active" : "error",
-            config: {
-              name: nextConnection.name,
-              description: nextConnection.description,
-              ui_status: nextConnection.status,
-              detail: nextConnection.detail,
-              last_checked: nextConnection.lastChecked,
-            },
-          }),
+        const healthCheckPath = resolveProviderHealthCheckEndpoint(
+          current.providerKind,
+          current.vendorName,
+          { tenantSlug, providerAccountId: connectionId }
+        );
+        await api(healthCheckPath, {
+          method: "POST",
         });
-        await refreshState();
+        await refreshProviderAccounts();
       },
       updateConnection: async (connectionId, payload) => {
         await api(`/api/v1/tenants/${tenantSlug}/provider-accounts/${connectionId}`, {
           method: "PATCH",
           body: JSON.stringify({
-            provider_kind: mapProviderKind(payload.category),
-            vendor_name: payload.vendor,
-            label: payload.name,
-            status: payload.status === "Connected" ? "active" : payload.status === "Warning" ? "error" : "draft",
-            config: {
-              name: payload.name,
-              description: payload.description,
-              ui_status: payload.status,
-              detail: payload.detail,
-              last_checked: payload.status === "Connected" ? `Healthy ${getTimeLabel()}` : `Updated ${getTimeLabel()}`,
-            },
+            provider_kind: payload.providerKind,
+            vendor_name: payload.vendorName,
+            label: payload.label,
+            status: payload.status,
+            config: payload.config,
           }),
         });
-        await refreshState();
+        await refreshProviderAccounts();
       },
-      addConnection: async ({ category, vendor, name }) => {
+      addConnection: async ({ providerKind, vendorName, label, status, config }) => {
         await api(`/api/v1/tenants/${tenantSlug}/provider-accounts`, {
           method: "POST",
           body: JSON.stringify({
-            provider_kind: mapProviderKind(category),
-            vendor_name: vendor,
-            label: name,
-            status: "active",
-            config: {
-              name,
-              description: `${vendor} connection for ${category.toLowerCase()} workflows.`,
-              ui_status: "Connected",
-              detail: `${vendor} was added and is ready for workflow setup.`,
-              last_checked: `Healthy ${getTimeLabel()}`,
-            },
+            provider_kind: providerKind,
+            vendor_name: vendorName,
+            label,
+            status,
+            config,
           }),
         });
-        await refreshState();
+        await refreshProviderAccounts();
         setNotifications((currentItems) => [
           {
             id: `note_${Date.now()}`,
             title: "Connection added",
-            message: `${name} is now available in the connections workspace.`,
+            message: `${label} is now available for agent configuration.`,
             tone: "success",
             href: "/connections",
           },
@@ -796,7 +847,7 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
         await api(`/api/v1/tenants/${tenantSlug}/provider-accounts/${connectionId}`, {
           method: "DELETE",
         });
-        await refreshState();
+        await refreshProviderAccounts();
       },
       startCall: ({ agentId, scenarioId, leadName, company, phone }) => {
         const agent = agents.find((item) => item.id === agentId) ?? agents[0];
@@ -818,7 +869,6 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
       setCallsView,
       selectCall: (callId) => {
         setSelectedCallId(callId);
-        setCallsView("review");
       },
       markSynced: async (callId) => {
         await api(`/api/v1/tenants/${tenantSlug}/workspaces/${workspaceId}/calls/${callId}`, {
@@ -835,7 +885,7 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
             title: "CRM sync completed",
             message: "The selected call was written back to the CRM timeline.",
             tone: "success",
-            href: "/calls",
+            href: "/calls/logs",
           },
           ...currentItems,
         ]);
@@ -848,7 +898,6 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
           method: "DELETE",
         });
         await refreshState();
-        setCallsView("launch");
       },
       dismissNotification: (notificationId) => {
         setNotifications((current) =>
@@ -863,6 +912,7 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
       callHistory,
       callsView,
       connections,
+      providerAccounts,
       currentUser,
       dateRange,
       notifications,
@@ -880,7 +930,7 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
   if (!isReady) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-canvas text-sm text-[#6D6D78]">
-        Loading workspace...
+        Loading Voice...
       </div>
     );
   }
@@ -889,7 +939,7 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-canvas p-6">
         <div className="w-full max-w-xl rounded-[24px] border border-border bg-white p-8 text-center shadow-surface">
-          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-accent">Workspace bootstrap</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-accent">App bootstrap</p>
           <h1 className="mt-4 text-2xl font-semibold text-[#17171F]">The app couldn’t finish loading</h1>
           <p className="mt-3 text-sm leading-6 text-[#6D6D78]">{bootstrapError}</p>
           <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
@@ -907,10 +957,10 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-canvas p-6">
         <div className="w-full max-w-xl rounded-[24px] border border-border bg-white p-8 text-center shadow-surface">
-          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-accent">Workspace access</p>
-          <h1 className="mt-4 text-2xl font-semibold text-[#17171F]">No workspace is assigned yet</h1>
+          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-accent">Access required</p>
+          <h1 className="mt-4 text-2xl font-semibold text-[#17171F]">No tenant membership is assigned yet</h1>
           <p className="mt-3 text-sm leading-6 text-[#6D6D78]">
-            Your account is authenticated, but it does not have a workspace membership yet. Add the first membership or reseed the environment, then try again.
+            Your account is authenticated, but it does not have an active tenant membership yet. Add the first membership or reseed the environment, then try again.
           </p>
           <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
             <Button onClick={() => void loadWorkspace()} variant="secondary">

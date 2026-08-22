@@ -57,3 +57,12 @@ def test_prod_environment_requires_explicit_session_secret() -> None:
             environment="prod",
             database_url="postgresql+psycopg://voice:prod@db.example.com:5432/proddb",
         )
+
+
+def test_dev_environment_defaults_livekit_to_local_server() -> None:
+    settings = Settings(_env_file=None, database_url="sqlite+pysqlite:///:memory:")
+
+    assert settings.livekit_url == "ws://127.0.0.1:7880"
+    assert settings.livekit_api_key == "devkey"
+    assert settings.livekit_api_secret == "secret"
+    assert settings.livekit_configured is True

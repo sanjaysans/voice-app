@@ -61,6 +61,7 @@ def _build_agent_record(agent) -> AgentStudioRecord:
             "stack",
             {"stt": "Deepgram", "llm": "GPT-4.1", "tts": "ElevenLabs"},
         ),
+        runtime_profile=vendor_config.get("runtime_profile", {}),
         flow_nodes=routing_config.get("flow_nodes", []),
         flow_edges=routing_config.get("flow_edges", []),
         tools_catalog=routing_config.get("tools_catalog", []),

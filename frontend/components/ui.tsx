@@ -4,12 +4,13 @@ import type {
   ButtonHTMLAttributes,
   ComponentType,
   InputHTMLAttributes,
+  KeyboardEvent,
   ReactNode,
-  SelectHTMLAttributes,
   TextareaHTMLAttributes
 } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { X } from "lucide-react";
+import { Check, ChevronDown, LoaderCircle, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -17,6 +18,8 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   size?: "sm" | "md" | "lg";
   asChild?: boolean;
   href?: string;
+  loading?: boolean;
+  loadingText?: string;
 };
 
 export function Button({
@@ -26,10 +29,13 @@ export function Button({
   size = "md",
   asChild,
   href,
+  loading = false,
+  loadingText,
+  disabled,
   ...props
 }: ButtonProps) {
   const styles = cn(
-    "inline-flex items-center gap-2 rounded-2xl font-medium transition focus:outline-none focus:ring-2 focus:ring-[rgba(102,89,255,0.22)] focus:ring-offset-2",
+    "inline-flex items-center gap-2 rounded-2xl font-medium transition focus:outline-none focus:ring-2 focus:ring-[rgba(102,89,255,0.22)] focus:ring-offset-2 disabled:pointer-events-none disabled:opacity-60",
     variant === "primary" && "bg-accent text-white hover:bg-[#5A4EF5]",
     variant === "secondary" && "border border-border bg-white text-[#17171F] hover:bg-[#fafafe]",
     variant === "ghost" && "text-[#6D6D78] hover:text-[#17171F]",
@@ -38,19 +44,84 @@ export function Button({
     size === "lg" && "px-5 py-3 text-sm",
     className
   );
+  const content = (
+    <>
+      {loading ? <Loader className="text-current" size={16} /> : null}
+      {loading && loadingText ? loadingText : children}
+    </>
+  );
 
   if (asChild && href) {
     return (
       <Link className={styles} href={href}>
-        {children}
+        {content}
       </Link>
     );
   }
 
   return (
-    <button className={styles} {...props}>
-      {children}
+    <button className={styles} disabled={disabled || loading} {...props}>
+      {content}
     </button>
+  );
+}
+
+export function Loader({
+  className,
+  label = "Loading",
+  size = 16
+}: {
+  className?: string;
+  label?: string;
+  size?: number;
+}) {
+  return (
+    <>
+      <LoaderCircle aria-hidden="true" className={cn("animate-spin", className)} size={size} />
+      <span className="sr-only">{label}</span>
+    </>
+  );
+}
+
+export function SurfaceLoader({
+  message,
+  className
+}: {
+  message: string;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "absolute inset-0 z-20 flex items-start justify-center rounded-[24px] bg-[rgba(247,247,249,0.72)] px-6 py-16 backdrop-blur-sm",
+        className
+      )}
+    >
+      <div className="flex items-center gap-3 rounded-2xl border border-border bg-white px-5 py-3 shadow-surface">
+        <Loader className="text-accent" />
+        <p className="text-sm font-medium text-[#17171F]">{message}</p>
+      </div>
+    </div>
+  );
+}
+
+export function ContentLoader({
+  title = "Loading",
+  description = "Fetching the latest data for this surface."
+}: {
+  title?: string;
+  description?: string;
+}) {
+  return (
+    <Card className="border-dashed bg-[#fcfcff]">
+      <div className="flex min-h-[220px] flex-col items-center justify-center px-6 text-center">
+        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[rgba(102,89,255,0.12)] text-accent">
+          <Loader className="text-accent" size={18} />
+        </div>
+        <h2 className="mt-5 text-lg font-semibold text-[#17171F]">{title}</h2>
+        <p className="mt-2 max-w-md text-sm leading-6 text-[#6D6D78]">{description}</p>
+      </div>
+    </Card>
   );
 }
 
@@ -138,6 +209,22 @@ type BaseFieldProps = {
   icon?: ComponentType<{ size?: number; className?: string }>;
 };
 
+type SelectOption = string | { label: string; value: string };
+
+type SelectProps = BaseFieldProps & {
+  ariaLabel?: string;
+  className?: string;
+  containerClassName?: string;
+  disabled?: boolean;
+  loading?: boolean;
+  name?: string;
+  onChange?: (event: { target: { value: string } }) => void;
+  options: SelectOption[];
+  placeholder?: string;
+  size?: "sm" | "md";
+  value?: string;
+};
+
 export function Input({
   className,
   label,
@@ -163,34 +250,139 @@ export function Input({
 }
 
 export function Select({
+  ariaLabel,
   className,
+  containerClassName,
+  disabled = false,
   label,
+  loading = false,
+  name,
+  onChange,
   options,
-  ...props
-}: SelectHTMLAttributes<HTMLSelectElement> &
-  BaseFieldProps & {
-    options: Array<string | { label: string; value: string }>;
-  }) {
+  placeholder = "Select an option",
+  size = "md",
+  value = ""
+}: SelectProps) {
+  const selectId = useId();
+  const dropdownRef = useRef<HTMLDivElement | null>(null);
+  const [isOpen, setIsOpen] = useState(false);
+  const normalizedOptions = useMemo(
+    () =>
+      options.map((option) =>
+        typeof option === "string" ? { label: option, value: option } : option
+      ),
+    [options]
+  );
+  const selectedOption = normalizedOptions.find((option) => option.value === value) ?? null;
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    function handlePointerDown(event: MouseEvent) {
+      if (!dropdownRef.current?.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+
+    function handleEscape(event: globalThis.KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleEscape);
+
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [isOpen]);
+
+  function handleSelect(nextValue: string) {
+    if (disabled || loading || nextValue === value) {
+      setIsOpen(false);
+      return;
+    }
+
+    onChange?.({ target: { value: nextValue } });
+    setIsOpen(false);
+  }
+
+  function handleTriggerKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
+    if (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      if (!disabled && !loading) {
+        setIsOpen(true);
+      }
+    }
+  }
+
   return (
-    <label className="block">
-      {label ? <span className="mb-2 block text-sm font-medium text-[#17171F]">{label}</span> : null}
-      <select
-        className={cn(
-          "w-full rounded-2xl border border-border bg-white px-4 py-3 text-sm text-[#17171F] outline-none transition focus:border-[rgba(102,89,255,0.32)]",
-          className
-        )}
-        {...props}
-      >
-        {options.map((option) => (
-          <option
-            key={typeof option === "string" ? option : option.value}
-            value={typeof option === "string" ? option : option.value}
-          >
-            {typeof option === "string" ? option : option.label}
-          </option>
-        ))}
-      </select>
-    </label>
+    <div className={cn("block", containerClassName)}>
+      {label ? (
+        <label className="mb-2 block text-sm font-medium text-[#17171F]" htmlFor={selectId}>
+          {label}
+        </label>
+      ) : null}
+      <div className="relative" ref={dropdownRef}>
+        {name ? <input name={name} type="hidden" value={value} /> : null}
+        <button
+          aria-expanded={isOpen}
+          aria-haspopup="listbox"
+          aria-label={ariaLabel ?? label ?? placeholder}
+          className={cn(
+            "flex w-full items-center justify-between gap-3 rounded-2xl border border-border bg-white px-4 text-left text-sm text-[#17171F] outline-none transition focus:border-[rgba(102,89,255,0.32)] focus:ring-2 focus:ring-[rgba(102,89,255,0.18)] disabled:pointer-events-none disabled:bg-[#FAFAFD] disabled:text-[#9A9AAA]",
+            size === "sm" ? "py-2.5" : "py-3",
+            className
+          )}
+          disabled={disabled || loading}
+          id={selectId}
+          onClick={() => setIsOpen((current) => !current)}
+          onKeyDown={handleTriggerKeyDown}
+          type="button"
+        >
+          <span className="min-w-0 flex-1 truncate">
+            {selectedOption?.label ?? placeholder}
+          </span>
+          <span className="flex items-center gap-2 text-[#8A8A97]">
+            {loading ? <Loader className="text-[#8A8A97]" size={14} /> : null}
+            <ChevronDown className={cn("transition", isOpen ? "rotate-180" : undefined)} size={16} />
+          </span>
+        </button>
+
+        {isOpen ? (
+          <div className="absolute left-0 right-0 top-[calc(100%+8px)] z-40 overflow-hidden rounded-2xl border border-border bg-white shadow-[0_22px_44px_rgba(20,20,26,0.12)]">
+            <div aria-labelledby={selectId} className="max-h-64 overflow-y-auto py-2" role="listbox">
+              {normalizedOptions.map((option) => {
+                const isSelected = option.value === value;
+
+                return (
+                  <button
+                    key={option.value}
+                    aria-selected={isSelected}
+                    className={cn(
+                      "flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left text-sm transition",
+                      isSelected
+                        ? "bg-[rgba(102,89,255,0.08)] text-accent"
+                        : "text-[#17171F] hover:bg-[#FAFAFD]"
+                    )}
+                    onClick={() => handleSelect(option.value)}
+                    role="option"
+                    type="button"
+                  >
+                    <span className="truncate">{option.label}</span>
+                    {isSelected ? <Check size={16} /> : null}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
@@ -267,5 +459,48 @@ export function Modal({
         <div className="mt-6">{children}</div>
       </div>
     </div>
+  );
+}
+
+export function ConfirmActionModal({
+  title,
+  description,
+  confirmLabel = "Confirm",
+  cancelLabel = "Cancel",
+  isOpen,
+  isPending = false,
+  onClose,
+  onConfirm
+}: {
+  title: string;
+  description: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  isOpen: boolean;
+  isPending?: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <Modal
+      title={title}
+      description={description}
+      isOpen={isOpen}
+      onClose={() => {
+        if (isPending) {
+          return;
+        }
+        onClose();
+      }}
+    >
+      <div className="flex justify-end gap-3">
+        <Button disabled={isPending} variant="secondary" onClick={onClose}>
+          {cancelLabel}
+        </Button>
+        <Button loading={isPending} loadingText={confirmLabel} onClick={onConfirm}>
+          {confirmLabel}
+        </Button>
+      </div>
+    </Modal>
   );
 }

@@ -3,7 +3,9 @@
 import { useEffect, useState } from "react";
 import { Play, Save } from "lucide-react";
 import { AgentFlowCanvas } from "@/components/agent-flow-canvas";
+import { ConfigFields } from "@/components/config-fields";
 import { useMockApp } from "@/lib/mock-app";
+import { useAsyncAction } from "@/lib/use-async-action";
 import {
   Badge,
   Button,
@@ -14,8 +16,17 @@ import {
   Select,
   Textarea,
 } from "@/components/ui";
+import {
+  getAccountOptions,
+  getAccountsByKind,
+  getProviderDefinition,
+  getProviderLabel,
+  parsePhoneNumbers,
+  type AgentRuntimeProfile,
+  type SupportedProviderKind,
+} from "@/lib/voice-stack";
 
-const editorTabs = ["Prompt", "Tools", "Knowledge", "Vendors"];
+const editorTabs = ["Prompt", "Tools", "Knowledge", "Runtime"];
 
 export default function AgentBuilderPage() {
   const {
@@ -24,16 +35,79 @@ export default function AgentBuilderPage() {
     selectAgent,
     updateAgent,
     updateFlowNode,
-    updateNodeVendor,
     toggleTool,
     toggleKnowledge,
-    publishAgent
+    publishAgent,
+    providerAccounts
   } = useMockApp();
   const [selectedNodeId, setSelectedNodeId] = useState(selectedAgent?.flowNodes[0]?.id ?? "");
   const [selectedTab, setSelectedTab] = useState("Prompt");
+  const publishAction = useAsyncAction();
   const selectedNode =
     selectedAgent?.flowNodes.find((node) => node.id === selectedNodeId) ??
     selectedAgent?.flowNodes[0];
+
+  function updateRuntimeProfile(updater: (profile: AgentRuntimeProfile) => AgentRuntimeProfile) {
+    if (!selectedAgent) {
+      return;
+    }
+
+    void updateAgent(selectedAgent.id, (agent) => {
+      const nextProfile = updater(agent.runtimeProfile);
+      const sttAccount = providerAccounts.find(
+        (account) => account.id === nextProfile.stt.providerAccountId
+      );
+      const llmAccount = providerAccounts.find(
+        (account) => account.id === nextProfile.llm.providerAccountId
+      );
+      const ttsAccount = providerAccounts.find(
+        (account) => account.id === nextProfile.tts.providerAccountId
+      );
+
+      return {
+        ...agent,
+        lastEdited: "Just now",
+        runtimeProfile: nextProfile,
+        stack: {
+          stt: sttAccount ? getProviderLabel("stt", sttAccount.vendorName) : agent.stack.stt,
+          llm: llmAccount ? getProviderLabel("llm", llmAccount.vendorName) : agent.stack.llm,
+          tts: ttsAccount ? getProviderLabel("tts", ttsAccount.vendorName) : agent.stack.tts
+        }
+      };
+    });
+  }
+
+  function buildRuntimeFields(kind: SupportedProviderKind) {
+    const runtimeProfile = selectedAgent?.runtimeProfile;
+    if (!runtimeProfile) {
+      return [];
+    }
+
+    if (kind === "telephony") {
+      const account = providerAccounts.find(
+        (item) => item.id === runtimeProfile.telephony.providerAccountId
+      );
+      const definition = getProviderDefinition("telephony", account?.vendorName || "twilio");
+      const options = parsePhoneNumbers(account?.preview.phone_numbers).map((item) => ({
+        label: item,
+        value: item
+      }));
+      return (definition?.runtimeFields ?? []).map((field) =>
+        field.id === "phoneNumber" ? { ...field, options } : field
+      );
+    }
+
+    const account = providerAccounts.find((item) => {
+      if (kind === "stt") {
+        return item.id === runtimeProfile.stt.providerAccountId;
+      }
+      if (kind === "llm") {
+        return item.id === runtimeProfile.llm.providerAccountId;
+      }
+      return item.id === runtimeProfile.tts.providerAccountId;
+    });
+    return getProviderDefinition(kind, account?.vendorName || (kind === "stt" ? "deepgram" : kind === "llm" ? "openai" : "cartesia"))?.runtimeFields ?? [];
+  }
 
   useEffect(() => {
     if (!selectedAgent) {
@@ -75,7 +149,11 @@ export default function AgentBuilderPage() {
               <Play size={16} />
               Run call
             </Button>
-            <Button onClick={() => publishAgent(selectedAgent.id)}>
+            <Button
+              loading={publishAction.isPending}
+              loadingText="Publishing workflow"
+              onClick={() => void publishAction.run(() => publishAgent(selectedAgent.id))}
+            >
               <Save size={16} />
               Publish workflow
             </Button>
@@ -248,26 +326,123 @@ export default function AgentBuilderPage() {
             </div>
           ) : null}
 
-          {selectedTab === "Vendors" ? (
-            <div className="grid gap-4 sm:grid-cols-3">
-              <Select
-                label="STT"
-                value={selectedNode.vendors.stt}
-                options={["Deepgram", "AssemblyAI", "Google STT"]}
-                onChange={(event) => updateNodeVendor(selectedAgent.id, selectedNode.id, "stt", event.target.value)}
-              />
-              <Select
-                label="LLM"
-                value={selectedNode.vendors.llm}
-                options={["GPT-4.1", "Claude Sonnet", "Gemini"]}
-                onChange={(event) => updateNodeVendor(selectedAgent.id, selectedNode.id, "llm", event.target.value)}
-              />
-              <Select
-                label="TTS"
-                value={selectedNode.vendors.tts}
-                options={["ElevenLabs", "Cartesia", "Azure TTS"]}
-                onChange={(event) => updateNodeVendor(selectedAgent.id, selectedNode.id, "tts", event.target.value)}
-              />
+          {selectedTab === "Runtime" ? (
+            <div className="space-y-5">
+              <div className="rounded-2xl border border-border bg-[#fafafe] p-4 text-sm leading-6 text-[#6D6D78]">
+                The runtime stays generic at the agent layer. Users only select from providers already configured in Connections, and the layer-specific fields adapt to the chosen vendor.
+              </div>
+
+              <div className="rounded-2xl border border-border bg-white p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-[#17171F]">Telephony</p>
+                    <p className="mt-1 text-sm text-[#6D6D78]">Pick the connected line used as caller identity for launches.</p>
+                  </div>
+                  <Badge tone="neutral">Optional for browser live</Badge>
+                </div>
+                <div className="mt-4 space-y-4">
+                  <Select
+                    label="Connected telephony account"
+                    options={getAccountOptions(providerAccounts, "telephony")}
+                    value={selectedAgent.runtimeProfile.telephony.providerAccountId}
+                    onChange={(event) =>
+                      updateRuntimeProfile((profile) => ({
+                        ...profile,
+                        telephony: {
+                          ...profile.telephony,
+                          providerAccountId: event.target.value,
+                          phoneNumber: ""
+                        }
+                      }))
+                    }
+                  />
+                  <ConfigFields
+                    fields={buildRuntimeFields("telephony")}
+                    values={selectedAgent.runtimeProfile.telephony as unknown as Record<string, unknown>}
+                    onChange={(fieldId, value) =>
+                      updateRuntimeProfile((profile) => ({
+                        ...profile,
+                        telephony: { ...profile.telephony, [fieldId]: value }
+                      }))
+                    }
+                  />
+                </div>
+              </div>
+
+              {(["stt", "llm", "tts"] as const).map((kind) => {
+                const layerProfile = selectedAgent.runtimeProfile[kind];
+                const accounts = getAccountsByKind(providerAccounts, kind);
+                const selectedAccount = accounts.find(
+                  (account) => account.id === layerProfile.providerAccountId
+                );
+
+                return (
+                  <div key={kind} className="rounded-2xl border border-border bg-white p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold uppercase tracking-[0.16em] text-accent">
+                          {kind}
+                        </p>
+                        <p className="mt-1 text-sm text-[#6D6D78]">
+                          {kind === "stt"
+                            ? "Capture speech cleanly before the agent reasons."
+                            : kind === "llm"
+                              ? "Control reasoning behavior, model selection, and retry posture."
+                              : "Shape the final voice, pacing, and output style."}
+                        </p>
+                      </div>
+                      <Badge tone={selectedAccount ? "success" : "warning"}>
+                        {selectedAccount ? getProviderLabel(kind, selectedAccount.vendorName) : "Connection required"}
+                      </Badge>
+                    </div>
+
+                    <div className="mt-4 space-y-4">
+                      <Select
+                        label="Connected provider"
+                        options={getAccountOptions(providerAccounts, kind)}
+                        value={layerProfile.providerAccountId}
+                        onChange={(event) => {
+                          const account = providerAccounts.find(
+                            (item) => item.id === event.target.value
+                          );
+                          updateRuntimeProfile((profile) => ({
+                            ...profile,
+                            [kind]: {
+                              ...profile[kind],
+                              providerAccountId: event.target.value,
+                              vendor: account?.vendorName ?? profile[kind].vendor
+                            }
+                          }));
+                        }}
+                      />
+                      <ConfigFields
+                        fields={buildRuntimeFields(kind)}
+                        values={layerProfile as unknown as Record<string, unknown>}
+                        onChange={(fieldId, value) =>
+                          updateRuntimeProfile((profile) => ({
+                            ...profile,
+                            [kind]: { ...profile[kind], [fieldId]: value }
+                          }))
+                        }
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+
+              <div className="rounded-2xl border border-border bg-white p-4">
+                <Textarea
+                  label="Opening message"
+                  rows={3}
+                  value={selectedAgent.runtimeProfile.prompt.openingMessage}
+                  onChange={(event) =>
+                    updateRuntimeProfile((profile) => ({
+                      ...profile,
+                      prompt: { ...profile.prompt, openingMessage: event.target.value }
+                    }))
+                  }
+                />
+              </div>
             </div>
           ) : null}
 

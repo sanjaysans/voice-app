@@ -16,6 +16,7 @@ The goal is not to overbuild. The goal is to make the first real system:
 - `v1-stack-and-bootstrap-plan.md` — recommended stack, repo layout, and phased bootstrap plan
 - `data-model-principles.md` — multi-tenant schema and persistence principles
 - `call-pipeline-principles.md` — media/runtime architecture and extensibility model
+- `livekit-pipeline-foundation.md` — current generic pipeline contract and LiveKit runtime scaffold
 - `jobs-and-operations.md` — async work, logging, and local operations model
 - `coding-standards.md` — coding style, layering, linting, comments, logging, and review rules
 

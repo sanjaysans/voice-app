@@ -60,14 +60,6 @@ export function AppShell({ children }: { children: ReactNode }) {
             </div>
           </div>
 
-          <div className="mt-8 rounded-2xl border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.04)] p-4">
-            <p className="text-xs uppercase tracking-[0.18em] text-[rgba(255,255,255,0.56)]">Active focus</p>
-            <p className="mt-2 text-sm font-medium">Unified call operations</p>
-            <p className="mt-2 text-sm leading-6 text-[rgba(255,255,255,0.72)]">
-              Build, launch, and review voice workflows from one operating surface.
-            </p>
-          </div>
-
           <nav className="mt-8 space-y-6">
             {navSections.map((section) => (
               <div key={section.label}>

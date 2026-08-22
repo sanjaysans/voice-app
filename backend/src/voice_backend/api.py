@@ -12,19 +12,20 @@ from voice_backend.auth import (
     require_platform_admin,
     require_tenant_access,
     require_tenant_write_access,
-    require_workspace_admin_access,
     require_workspace_access,
+    require_workspace_admin_access,
     require_workspace_write_access,
 )
 from voice_backend.database import get_request_session
-from voice_backend.schemas import LoginInput
 from voice_backend.schemas import (
     AgentDefinitionCreateInput,
     AgentDefinitionUpdateInput,
     AgentStudioUpdateInput,
     AgentVersionCreateInput,
+    BrowserRtcSessionCreateInput,
     CallReviewCreateInput,
     CallReviewUpdateInput,
+    LoginInput,
     ProviderAccountCreateInput,
     ProviderAccountUpdateInput,
     TeamMemberCreateInput,
@@ -42,6 +43,8 @@ from voice_backend.services import (
     CallHistoryService,
     CallReviewService,
     ProviderAccountAdminService,
+    RealtimeSessionError,
+    RealtimeSessionService,
     TeamAdminService,
     TenantAdminService,
     TenantOverviewService,
@@ -287,7 +290,9 @@ def list_team_members(
     return [item.model_dump() for item in members]
 
 
-@router.post("/tenants/{tenant_slug}/workspaces/{workspace_id}/members", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/tenants/{tenant_slug}/workspaces/{workspace_id}/members", status_code=status.HTTP_201_CREATED
+)
 def create_team_member(
     tenant_slug: str,
     workspace_id: UUID,
@@ -340,9 +345,7 @@ def delete_team_member(
     require_workspace_admin_access(auth, tenant_slug, workspace_id)
     deleted = _execute_write(
         session,
-        lambda: TeamAdminService(session).delete_member(
-            tenant_slug, workspace_id, membership_id
-        ),
+        lambda: TeamAdminService(session).delete_member(tenant_slug, workspace_id, membership_id),
     )
     if not deleted:
         raise HTTPException(status_code=404, detail="team member not found")
@@ -503,7 +506,36 @@ def list_recent_calls(
     return [item.model_dump() for item in summaries]
 
 
-@router.post("/tenants/{tenant_slug}/workspaces/{workspace_id}/calls", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/tenants/{tenant_slug}/workspaces/{workspace_id}/live/sessions",
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_browser_rtc_session(
+    tenant_slug: str,
+    workspace_id: UUID,
+    payload: BrowserRtcSessionCreateInput,
+    request: Request,
+    session: SessionDependency,
+    auth: AuthDependency,
+):
+    require_workspace_access(auth, tenant_slug, workspace_id)
+    workspace = WorkspaceAdminService(session).get_workspace(tenant_slug, workspace_id)
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="workspace not found")
+    try:
+        created = await RealtimeSessionService(request.app.state.settings).create_browser_session(
+            payload,
+            user_id=auth.user_id,
+            display_name=auth.display_name,
+        )
+    except RealtimeSessionError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return created.model_dump()
+
+
+@router.post(
+    "/tenants/{tenant_slug}/workspaces/{workspace_id}/calls", status_code=status.HTTP_201_CREATED
+)
 def create_call_review(
     tenant_slug: str,
     workspace_id: UUID,
@@ -533,7 +565,9 @@ def update_call_review(
     require_workspace_access(auth, tenant_slug, workspace_id)
     updated = _execute_write(
         session,
-        lambda: CallReviewService(session).update_review(tenant_slug, workspace_id, call_id, payload),
+        lambda: CallReviewService(session).update_review(
+            tenant_slug, workspace_id, call_id, payload
+        ),
     )
     if updated is None:
         raise HTTPException(status_code=404, detail="call not found")
@@ -619,6 +653,25 @@ def update_provider_account(
     if updated is None:
         raise HTTPException(status_code=404, detail="provider account not found")
     return updated.model_dump()
+
+
+@router.post("/tenants/{tenant_slug}/provider-accounts/{provider_account_id}/health-check")
+def run_provider_account_health_check(
+    tenant_slug: str,
+    provider_account_id: UUID,
+    session: SessionDependency,
+    auth: AuthDependency,
+):
+    require_tenant_access(auth, tenant_slug)
+    checked = _execute_write(
+        session,
+        lambda: ProviderAccountAdminService(session).run_health_check(
+            tenant_slug, provider_account_id
+        ),
+    )
+    if checked is None:
+        raise HTTPException(status_code=404, detail="provider account not found")
+    return checked.model_dump()
 
 
 @router.delete(

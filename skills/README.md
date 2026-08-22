@@ -10,6 +10,7 @@ These are repo-local playbooks for how Voice work should be executed.
 - `local-first-development` — keep setup, reset, seed, and debug flows simple
 - `architecture-review` — review foundational service and schema decisions before implementation
 - `change-review-gate` — require a senior SDE plus tech-architect review before completion
+- `frontend-ui-guidelines` — enforce shared dropdowns, loading states, and double-click protection
 - `backend-layer-guidelines` — enforce clean boundaries in the control plane
 - `pipeline-layer-guidelines` — enforce extensible realtime runtime design
 - `jobs-layer-guidelines` — enforce durable async workflow patterns

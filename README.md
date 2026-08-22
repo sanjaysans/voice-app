@@ -31,7 +31,8 @@ The focus right now is:
 6. Apply migrations with `make db-migrate ENV=dev`
 7. Seed the default admin workspace with `make db-seed ENV=dev`
 8. Verify Alembic head, required indexes, and seed health with `make db-verify ENV=dev`
-9. In separate terminals run `make backend ENV=dev`, `make pipeline ENV=dev`, `make jobs ENV=dev`, and `make mock`
+9. Install LiveKit Server locally if needed, then start it with `make livekit`
+10. In separate terminals run `make backend ENV=dev`, `make pipeline ENV=dev`, `make pipeline-worker ENV=dev`, `make jobs ENV=dev`, and `make mock`
 
 Minimal local-first app flow without `make` also works:
 
@@ -49,6 +50,7 @@ Local defaults after startup:
 - backend: `http://localhost:8100/health`
 - pipeline: `http://localhost:8101/health`
 - jobs: `http://localhost:8102/health`
+- live browser room test: `http://localhost:3000/live`
 - Temporal Web UI: `http://localhost:8233`
 
 ## Environment Strategy
@@ -57,6 +59,8 @@ Local defaults after startup:
 - `VOICE_DATABASE_URL` can override everything for one-off runs
 - `VOICE_DATABASE_URL_DEV`, `VOICE_DATABASE_URL_TEST`, and `VOICE_DATABASE_URL_PROD` hold your Supabase connection strings
 - `VOICE_SESSION_SECRET` signs backend session cookies and must be set explicitly in production
+- `VOICE_PIPELINE_BASE_URL` tells the backend where to build browser session manifests
+- `VOICE_LIVEKIT_URL`, `VOICE_LIVEKIT_API_KEY`, and `VOICE_LIVEKIT_API_SECRET` default to the local LiveKit dev server in non-production environments
 - for local development on typical IPv4 networks, prefer Supabase session-pooler URLs over direct `db.<ref>.supabase.co` URLs
 - `test` falls back to the `dev` database when its own URL is not set
 - `prod` still fails fast if its database URL is not configured

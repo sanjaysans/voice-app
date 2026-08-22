@@ -11,6 +11,9 @@ from voice_backend.schemas import SessionMembershipRecord
 from voice_backend.security import SessionPayload, decode_session_token
 from voice_backend.services.authentication import AuthenticationService
 
+RequestSession = Session
+RequestSessionDependency = Depends(get_request_session)
+
 
 @dataclass(frozen=True)
 class AuthContext:
@@ -25,12 +28,14 @@ class AuthContext:
 
 def get_current_auth(
     request: Request,
-    session: Session = Depends(get_request_session),
+    session: RequestSession = RequestSessionDependency,
 ) -> AuthContext:
     settings = request.app.state.settings
     token = request.cookies.get(settings.session_cookie_name)
     if not token:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="authentication required")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="authentication required"
+        )
 
     payload = decode_session_token(token, secret=settings.session_secret)
     if payload is None:
@@ -58,7 +63,9 @@ def require_platform_admin(auth: AuthContext) -> None:
 
 
 def require_tenant_access(auth: AuthContext, tenant_slug: str) -> None:
-    if auth.is_platform_admin or any(membership.tenant_slug == tenant_slug for membership in auth.memberships):
+    if auth.is_platform_admin or any(
+        membership.tenant_slug == tenant_slug for membership in auth.memberships
+    ):
         return
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant access denied")
 
@@ -95,7 +102,9 @@ def require_workspace_write_access(auth: AuthContext, tenant_slug: str, workspac
         for membership in auth.memberships
     ):
         return
-    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="workspace write access denied")
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN, detail="workspace write access denied"
+    )
 
 
 def require_workspace_admin_access(auth: AuthContext, tenant_slug: str, workspace_id: UUID) -> None:
@@ -108,4 +117,6 @@ def require_workspace_admin_access(auth: AuthContext, tenant_slug: str, workspac
         for membership in auth.memberships
     ):
         return
-    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="workspace admin access denied")
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN, detail="workspace admin access denied"
+    )

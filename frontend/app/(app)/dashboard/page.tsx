@@ -161,8 +161,8 @@ export default function DashboardPage() {
               <h2 className="text-lg font-semibold">Recent call reviews</h2>
               <p className="mt-1 text-sm text-[#6D6D78]">Click any call to jump into the review surface.</p>
             </div>
-            <Link className="text-sm font-medium text-accent" href="/calls">
-              Open calls
+            <Link className="text-sm font-medium text-accent" href="/calls/logs">
+              Open call logs
             </Link>
           </div>
 
@@ -174,7 +174,7 @@ export default function DashboardPage() {
                   className="w-full rounded-2xl border border-border bg-white p-4 text-left transition hover:border-[rgba(102,89,255,0.24)] hover:bg-[#fcfcff]"
                   onClick={() => {
                     selectCall(call.id);
-                    router.push("/calls");
+                    router.push("/calls/logs");
                   }}
                   type="button"
                 >

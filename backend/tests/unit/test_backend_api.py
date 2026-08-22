@@ -3,8 +3,9 @@ from dataclasses import replace
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from voice_backend.auth import get_current_auth
+from voice_backend import api as backend_api
 from voice_backend.app import create_app
+from voice_backend.auth import get_current_auth
 from voice_backend.database import get_request_session
 from voice_backend.schemas import SessionMembershipRecord
 
@@ -17,7 +18,9 @@ def build_test_app(session, auth_context):
 
 
 @pytest.mark.asyncio
-async def test_tenant_overview_endpoint_returns_404_for_unknown_tenant(session, auth_context) -> None:
+async def test_tenant_overview_endpoint_returns_404_for_unknown_tenant(
+    session, auth_context
+) -> None:
     app = build_test_app(session, auth_context)
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://testserver"
@@ -29,7 +32,9 @@ async def test_tenant_overview_endpoint_returns_404_for_unknown_tenant(session, 
 
 
 @pytest.mark.asyncio
-async def test_tenant_overview_endpoint_returns_counts(session, seeded_domain, auth_context) -> None:
+async def test_tenant_overview_endpoint_returns_counts(
+    session, seeded_domain, auth_context
+) -> None:
     app = build_test_app(session, auth_context)
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://testserver"
@@ -250,6 +255,53 @@ async def test_provider_account_crud_endpoints_work(session, seeded_domain, auth
 
 
 @pytest.mark.asyncio
+async def test_provider_account_health_check_endpoint_updates_status(
+    session, auth_context, monkeypatch
+) -> None:
+    app = build_test_app(session, auth_context)
+
+    class DummyResponse:
+        status_code = 200
+
+    class DummyClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def get(self, *args, **kwargs):
+            return DummyResponse()
+
+    monkeypatch.setattr("voice_backend.services.provider_account_admin.httpx.Client", DummyClient)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        create_response = await client.post(
+            "/api/v1/tenants/voice-demo/provider-accounts",
+            json={
+                "provider_kind": "llm",
+                "vendor_name": "openai",
+                "label": "OpenAI Live",
+                "status": "draft",
+                "config": {"api_key": "sk-test"},
+            },
+        )
+        response = await client.post(
+            f"/api/v1/tenants/voice-demo/provider-accounts/{create_response.json()['provider_account_id']}/health-check"
+        )
+
+    assert create_response.status_code == 201
+    assert response.status_code == 200
+    assert response.json()["status"] == "active"
+    assert response.json()["preview"]["ui_status"] == "Connected"
+
+
+@pytest.mark.asyncio
 async def test_workspace_app_state_and_team_endpoints_work(
     session, seeded_domain, auth_context
 ) -> None:
@@ -288,9 +340,7 @@ async def test_workspace_app_state_and_team_endpoints_work(
         assert update_member_response.json()["display_name"] == "Ops Manager"
         assert list_members_response.status_code == 200
         assert len(list_members_response.json()) == 2
-        assert any(
-            item["display_name"] == "Ops Manager" for item in list_members_response.json()
-        )
+        assert any(item["display_name"] == "Ops Manager" for item in list_members_response.json())
         assert delete_member_response.status_code == 204
 
 
@@ -333,6 +383,57 @@ async def test_call_review_endpoints_create_update_and_delete(
         assert update_response.json()["synced_to_crm"] is True
         assert update_response.json()["next_step"] == "CRM synced."
         assert delete_response.status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_browser_rtc_session_endpoint_returns_join_credentials(
+    session, seeded_domain, auth_context, monkeypatch
+) -> None:
+    class StubRealtimeSessionService:
+        def __init__(self, _settings) -> None:
+            pass
+
+        async def create_browser_session(self, payload, *, user_id, display_name):
+            assert payload.dispatch_agent_name == "voice-router-agent"
+            assert user_id == auth_context.user_id
+            assert display_name == auth_context.display_name
+
+            class StubRecord:
+                def model_dump(self):
+                    return {
+                        "room_name": "voice-room-local",
+                        "participant_identity": "web-demo-user",
+                        "participant_name": display_name,
+                        "server_url": "ws://127.0.0.1:7880",
+                        "access_token": "jwt-token",
+                        "dispatch_id": "dispatch-123",
+                        "dispatch_agent_name": "voice-router-agent",
+                        "session": {"room_name": "voice-room-local"},
+                        "runtime": {"transport": "livekit"},
+                        "warnings": [],
+                        "errors": [],
+                    }
+
+            return StubRecord()
+
+    monkeypatch.setattr(backend_api, "RealtimeSessionService", StubRealtimeSessionService)
+    app = build_test_app(session, auth_context)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.post(
+            f"/api/v1/tenants/voice-demo/workspaces/{seeded_domain['workspace'].id}/live/sessions",
+            json={
+                "dispatch_agent_name": "voice-router-agent",
+                "stt": {"api_key": "dg-key"},
+                "llm": {"api_key": "oa-key"},
+                "tts": {"api_key": "ca-key"},
+            },
+        )
+
+        assert response.status_code == 201
+        assert response.json()["room_name"] == "voice-room-local"
+        assert response.json()["dispatch_agent_name"] == "voice-router-agent"
 
 
 @pytest.mark.asyncio

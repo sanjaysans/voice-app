@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { useMockApp } from "@/lib/mock-app";
 import { api } from "@/lib/api-client";
-import { Badge, Button, Card, EmptyState, Input, Modal, PageHeader, Textarea } from "@/components/ui";
+import { useAsyncAction, useKeyedAsyncAction } from "@/lib/use-async-action";
+import { Badge, Button, Card, ConfirmActionModal, ContentLoader, EmptyState, Input, Modal, PageHeader, SurfaceLoader, Textarea } from "@/components/ui";
 
 type ProviderAccountRecord = {
   provider_account_id: string;
@@ -23,17 +24,42 @@ export default function WebhooksPage() {
   const [label, setLabel] = useState("");
   const [url, setUrl] = useState("");
   const [events, setEvents] = useState("call.completed,call.follow_up");
+  const createAction = useAsyncAction();
+  const editAction = useAsyncAction();
+  const rowAction = useKeyedAsyncAction();
+  const [isLoading, setIsLoading] = useState(true);
+  const [pendingMessage, setPendingMessage] = useState<string | null>(null);
+  const [hookToDelete, setHookToDelete] = useState<{ id: string; label: string } | null>(null);
 
-  async function loadHooks() {
-    const accounts = await api<ProviderAccountRecord[]>(
-      `/api/v1/tenants/${tenantSlug}/provider-accounts`
-    );
-    setHooks(accounts.filter((item) => item.provider_kind === "webhook"));
+  async function loadHooks(options?: { showLoader?: boolean }) {
+    if (options?.showLoader) {
+      setIsLoading(true);
+    }
+
+    try {
+      const accounts = await api<ProviderAccountRecord[]>(
+        `/api/v1/tenants/${tenantSlug}/provider-accounts`
+      );
+      setHooks(accounts.filter((item) => item.provider_kind === "webhook"));
+    } finally {
+      if (options?.showLoader) {
+        setIsLoading(false);
+      }
+    }
   }
 
   useEffect(() => {
-    void loadHooks();
+    void loadHooks({ showLoader: true });
   }, [tenantSlug]);
+
+  async function withPagePending<T>(message: string, action: () => Promise<T>) {
+    setPendingMessage(message);
+    try {
+      return await action();
+    } finally {
+      setPendingMessage(null);
+    }
+  }
 
   async function createWebhook() {
     setIsOpen(false);
@@ -92,6 +118,8 @@ export default function WebhooksPage() {
     await loadHooks();
   }
 
+  const isMutating = Boolean(pendingMessage);
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -106,6 +134,16 @@ export default function WebhooksPage() {
         }
       />
 
+      {isLoading ? (
+        <ContentLoader
+          title="Loading webhooks"
+          description="Fetching outbound endpoints and recent delivery state for this tenant."
+        />
+      ) : null}
+
+      {!isLoading ? (
+      <div className="relative">
+        {isMutating ? <SurfaceLoader message={pendingMessage ?? ""} /> : null}
       <Card>
         {hooks.length ? (
           <div className="space-y-3">
@@ -152,8 +190,12 @@ export default function WebhooksPage() {
                     Edit
                   </Button>
                   <Button
+                    loading={rowAction.pendingKey === `delete:${hook.provider_account_id}`}
+                    loadingText="Deleting"
                     variant="ghost"
-                    onClick={() => void removeWebhook(hook.provider_account_id)}
+                    onClick={() =>
+                      setHookToDelete({ id: hook.provider_account_id, label: hook.label })
+                    }
                   >
                     <Trash2 size={16} />
                     Delete
@@ -169,18 +211,34 @@ export default function WebhooksPage() {
           />
         )}
       </Card>
+      </div>
+      ) : null}
 
       <Modal
         title="Add webhook"
         description="Register a new outbound event endpoint for the current tenant."
         isOpen={isOpen}
-        onClose={() => setIsOpen(false)}
+        onClose={() => {
+          if (createAction.isPending) {
+            return;
+          }
+          setIsOpen(false);
+        }}
       >
         <div className="space-y-4">
           <Input label="Label" value={label} onChange={(event) => setLabel(event.target.value)} />
           <Input label="URL" value={url} onChange={(event) => setUrl(event.target.value)} />
           <Textarea label="Events" rows={4} value={events} onChange={(event) => setEvents(event.target.value)} />
-          <Button className="w-full justify-center" onClick={() => void createWebhook()}>
+          <Button
+            className="w-full justify-center"
+            loading={createAction.isPending}
+            loadingText="Saving webhook"
+            onClick={() =>
+              void createAction.run(() =>
+                withPagePending(`Saving ${label || "webhook"}...`, createWebhook)
+              )
+            }
+          >
             Save webhook
           </Button>
         </div>
@@ -190,17 +248,49 @@ export default function WebhooksPage() {
         title="Edit webhook"
         description="Update the endpoint and event list while preserving the existing simulated delivery history."
         isOpen={Boolean(editingHook)}
-        onClose={() => setEditingHook(null)}
+        onClose={() => {
+          if (editAction.isPending) {
+            return;
+          }
+          setEditingHook(null);
+        }}
       >
         <div className="space-y-4">
           <Input label="Label" value={label} onChange={(event) => setLabel(event.target.value)} />
           <Input label="URL" value={url} onChange={(event) => setUrl(event.target.value)} />
           <Textarea label="Events" rows={4} value={events} onChange={(event) => setEvents(event.target.value)} />
-          <Button className="w-full justify-center" onClick={() => void updateWebhook()}>
+          <Button
+            className="w-full justify-center"
+            loading={editAction.isPending}
+            loadingText="Saving changes"
+            onClick={() => void editAction.run(updateWebhook)}
+          >
             Save changes
           </Button>
         </div>
       </Modal>
+
+      <ConfirmActionModal
+        title="Delete webhook"
+        description={
+          hookToDelete
+            ? `Delete ${hookToDelete.label}? Simulated delivery history for this endpoint will be removed from the prototype.`
+            : "Delete this webhook? This action cannot be undone."
+        }
+        confirmLabel="Delete webhook"
+        isOpen={Boolean(hookToDelete)}
+        isPending={rowAction.pendingKey === `delete:${hookToDelete?.id ?? ""}`}
+        onClose={() => setHookToDelete(null)}
+        onConfirm={() => {
+          if (!hookToDelete) {
+            return;
+          }
+          void rowAction.run(`delete:${hookToDelete.id}`, async () => {
+            await removeWebhook(hookToDelete.id);
+            setHookToDelete(null);
+          });
+        }}
+      />
     </div>
   );
 }

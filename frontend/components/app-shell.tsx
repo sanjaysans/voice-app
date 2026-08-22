@@ -1,71 +1,131 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Bell,
   Cable,
-  ChevronRight,
   FolderKanban,
   KeyRound,
   LayoutDashboard,
   LineChart,
+  LogOut,
   Mic,
   Phone,
   Puzzle,
+  Radio,
+  ScrollText,
   Shield,
   Route,
+  Sparkles,
   Settings2,
   Users,
   Webhook,
-  X
 } from "lucide-react";
+import { api } from "@/lib/api-client";
+import { useApiActivity } from "@/lib/api-activity";
 import { useMockApp } from "@/lib/mock-app";
+import { useAsyncAction } from "@/lib/use-async-action";
 import { cn } from "@/lib/utils";
-import { Badge, Button } from "@/components/ui";
+import { Badge, Button, ConfirmActionModal, Select } from "@/components/ui";
+
+type NavItem = {
+  href: string;
+  label: string;
+  icon: typeof LayoutDashboard;
+  soon?: boolean;
+};
 
 const navSections = [
+  {
+    label: "Overview",
+    items: [
+      { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+      { href: "/calls", label: "Calls", icon: Phone },
+      { href: "/calls/logs", label: "Call logs", icon: ScrollText },
+      { href: "/live", label: "Live", icon: Radio },
+      { href: "/qa-review", label: "QA review", icon: Shield, soon: true },
+      { href: "/analytics", label: "Analytics", icon: LineChart, soon: true }
+    ] satisfies NavItem[]
+  },
   {
     label: "Build",
     items: [
       { href: "/agents", label: "Agents", icon: Mic },
       { href: "/agents/builder", label: "Studio", icon: Route },
-      { href: "/prompts", label: "Prompts", icon: Route },
-      { href: "/knowledge-base", label: "Knowledge", icon: FolderKanban },
-      { href: "/tools", label: "Tools", icon: Puzzle },
-      { href: "/releases", label: "Releases", icon: Route },
-      { href: "/guardrails", label: "Guardrails", icon: Shield }
-    ]
-  },
-  {
-    label: "Operate",
-    items: [
-      { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-      { href: "/calls", label: "Calls", icon: Phone },
-      { href: "/calls/logs", label: "Call logs", icon: Phone },
-      { href: "/qa-review", label: "QA review", icon: Shield },
-      { href: "/analytics", label: "Analytics", icon: LineChart }
-    ]
+      { href: "/prompts", label: "Prompts", icon: Route, soon: true },
+      { href: "/knowledge-base", label: "Knowledge", icon: FolderKanban, soon: true },
+      { href: "/tools", label: "Tools", icon: Puzzle, soon: true },
+      { href: "/releases", label: "Releases", icon: Sparkles, soon: true },
+      { href: "/guardrails", label: "Guardrails", icon: Shield, soon: true }
+    ] satisfies NavItem[]
   },
   {
     label: "Admin",
     items: [
       { href: "/connections", label: "Connections", icon: Cable },
-      { href: "/workspaces", label: "Workspaces", icon: FolderKanban },
       { href: "/team", label: "Team", icon: Users },
-      { href: "/webhooks", label: "Webhooks", icon: Webhook },
-      { href: "/secrets", label: "Secrets", icon: KeyRound },
-      { href: "/compliance", label: "Compliance", icon: Shield }
-    ]
+      { href: "/workspaces", label: "Workspaces", icon: FolderKanban },
+      { href: "/webhooks", label: "Webhooks", icon: Webhook, soon: true },
+      { href: "/secrets", label: "Secrets", icon: KeyRound, soon: true },
+      { href: "/compliance", label: "Compliance", icon: Shield, soon: true }
+    ] satisfies NavItem[]
   }
 ];
 
+function NavLink({ item, active }: { item: NavItem; active: boolean }) {
+  return (
+    <Link
+      className={cn(
+        "flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-medium transition",
+        active
+          ? "bg-[rgba(102,89,255,0.18)] text-white"
+          : "text-[rgba(255,255,255,0.7)] hover:bg-[rgba(255,255,255,0.04)] hover:text-white"
+      )}
+      href={item.href}
+    >
+      <item.icon size={18} className={active ? "text-accent-soft" : undefined} />
+      <span className="min-w-0 flex-1 truncate">{item.label}</span>
+      {item.soon ? (
+        <span
+          className={cn(
+            "rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em]",
+            active
+              ? "border-[rgba(255,255,255,0.18)] bg-[rgba(255,255,255,0.08)] text-[rgba(255,255,255,0.84)]"
+              : "border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.04)] text-[rgba(255,255,255,0.5)]"
+          )}
+        >
+          Soon
+        </span>
+      ) : null}
+    </Link>
+  );
+}
+
+type WorkspaceOption = {
+  workspace_id: string;
+  name: string;
+  is_default: boolean;
+};
+
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const { currentUser, notifications, dismissNotification, connections, workspaceName, signOut } =
-    useMockApp();
-  const itemsNeedingReview = connections.filter((connection) => connection.status !== "Connected").length;
+  const {
+    currentUser,
+    notifications,
+    signOut,
+    tenantSlug,
+    workspaceId,
+    workspaceName,
+    reloadWorkspaceContext,
+  } = useMockApp();
+  const [workspaces, setWorkspaces] = useState<WorkspaceOption[]>([]);
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState("");
+  const [isLogoutOpen, setIsLogoutOpen] = useState(false);
+  const workspaceSwitch = useAsyncAction();
+  const signOutAction = useAsyncAction();
+  const { isLoading: isApiLoading } = useApiActivity();
   const todayLabel = new Intl.DateTimeFormat("en-US", {
     weekday: "long",
     month: "long",
@@ -73,26 +133,45 @@ export function AppShell({ children }: { children: ReactNode }) {
     year: "numeric",
   }).format(new Date());
 
+  useEffect(() => {
+    setSelectedWorkspaceId(workspaceId);
+  }, [workspaceId]);
+
+  useEffect(() => {
+    if (!tenantSlug) {
+      setWorkspaces([]);
+      return;
+    }
+
+    void api<WorkspaceOption[]>(`/api/v1/tenants/${tenantSlug}/workspaces`)
+      .then(setWorkspaces)
+      .catch(() => setWorkspaces([]));
+  }, [tenantSlug, workspaceId]);
+
+  async function handleWorkspaceChange(nextWorkspaceId: string) {
+    setSelectedWorkspaceId(nextWorkspaceId);
+    await reloadWorkspaceContext(nextWorkspaceId);
+  }
+
+  async function handleSignOut() {
+    setIsLogoutOpen(false);
+    await signOut();
+  }
+
   return (
     <div className="flex min-h-screen bg-canvas">
-      <aside className="sticky top-0 hidden h-screen w-[248px] flex-col bg-sidebar px-5 py-6 text-white lg:flex">
+      <aside className="sticky top-0 hidden h-screen w-[262px] flex-col bg-sidebar px-5 py-6 text-white lg:flex">
         <div className="min-h-0 flex-1 overflow-y-auto pr-1 scrollbar-subtle">
-          <div className="flex items-center gap-3 px-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-accent text-white">
-              <Mic size={18} />
+          <div className="px-3">
+            <div className="flex items-center gap-3">
+              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-accent text-white">
+                <Mic size={18} />
+              </div>
+              <div>
+                <p className="text-sm font-semibold">Voice</p>
+                <p className="text-xs text-[rgba(255,255,255,0.64)]">Operator console</p>
+              </div>
             </div>
-            <div>
-              <p className="text-sm font-semibold">Voice</p>
-              <p className="text-xs text-[rgba(255,255,255,0.64)]">Operator workspace</p>
-            </div>
-          </div>
-
-          <div className="mt-8 rounded-2xl border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.04)] p-4">
-            <p className="text-xs uppercase tracking-[0.18em] text-[rgba(255,255,255,0.56)]">Active focus</p>
-            <p className="mt-2 text-sm font-medium">Unified call operations</p>
-            <p className="mt-2 text-sm leading-6 text-[rgba(255,255,255,0.72)]">
-              Build, launch, and review voice workflows from one operating surface.
-            </p>
           </div>
 
           <nav className="mt-8 space-y-6">
@@ -104,22 +183,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <div className="mt-2 space-y-2">
                   {section.items.map((item) => {
                     const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
-
-                    return (
-                      <Link
-                        key={item.href}
-                        className={cn(
-                          "flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-medium transition",
-                          active
-                            ? "bg-[rgba(102,89,255,0.18)] text-white"
-                            : "text-[rgba(255,255,255,0.68)] hover:bg-[rgba(255,255,255,0.04)] hover:text-white"
-                        )}
-                        href={item.href}
-                      >
-                        <item.icon size={18} className={active ? "text-accent-soft" : undefined} />
-                        {item.label}
-                      </Link>
-                    );
+                    return <NavLink key={item.href} item={item} active={active} />;
                   })}
                 </div>
               </div>
@@ -133,55 +197,69 @@ export function AppShell({ children }: { children: ReactNode }) {
               <Settings2 size={18} />
             </div>
             <div>
-              <p className="text-sm font-medium">{workspaceName || "Workspace setup pending"}</p>
-              <p className="text-xs text-[rgba(255,255,255,0.64)]">Authenticated operator workspace</p>
+              <p className="text-sm font-medium">{currentUser?.displayName ?? "Voice user"}</p>
+              <p className="text-xs text-[rgba(255,255,255,0.64)]">{currentUser?.email ?? "No session"}</p>
             </div>
           </div>
         </div>
       </aside>
 
       <div className="min-w-0 flex-1">
-        <header className="sticky top-0 z-30 border-b border-border bg-[rgba(247,247,249,0.92)] backdrop-blur">
-          <div className="flex min-h-[84px] flex-col gap-4 px-6 py-4 lg:px-8 xl:flex-row xl:items-center xl:justify-between">
-            <div>
-              <p className="text-xs uppercase tracking-[0.22em] text-[#6D6D78]">{todayLabel}</p>
-              <div className="mt-2 flex flex-wrap items-center gap-3">
-                <p className="text-sm text-[#4B4B59]">Unified AI calling workspace for workflow design, launch, and review.</p>
-                <Badge tone={itemsNeedingReview ? "warning" : "success"}>
-                  {itemsNeedingReview ? `${itemsNeedingReview} items need review` : "All systems healthy"}
-                </Badge>
-              </div>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-3">
-              <Button asChild href="/calls" variant="secondary">
-                Launch call
-              </Button>
-              <Button asChild href="/agents/builder">
-                Open studio
-                <ChevronRight size={16} />
-              </Button>
-              <div className="rounded-2xl border border-border bg-white px-4 py-3">
-                <div className="flex items-center gap-2 text-sm font-medium">
-                  <Bell size={16} className="text-accent" />
-                  {notifications.length} alerts
-                </div>
-              </div>
-              <div className="rounded-2xl border border-border bg-white px-4 py-3 text-right">
-                <p className="text-sm font-medium">{currentUser?.displayName ?? "Voice user"}</p>
-                <p className="text-xs text-[#6D6D78]">{currentUser?.role ?? "Admin"}</p>
-              </div>
-              <Button onClick={() => void signOut()} variant="secondary">
-                Sign out
-              </Button>
-              <div className="rounded-2xl border border-border bg-white px-4 py-3 text-right">
-                <p className="text-sm font-medium">{currentUser?.email ?? "No session"}</p>
-                <p className="text-xs text-[#6D6D78]">
-                  {currentUser?.isPlatformAdmin ? "Platform admin" : "Workspace access"}
-                </p>
+        <header className="sticky top-0 z-30 border-b border-border bg-[rgba(247,247,249,0.94)] backdrop-blur">
+          <div className="px-6 py-4 lg:px-8">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-xs font-medium uppercase tracking-[0.2em] text-[#6D6D78]">
+                {todayLabel}
+              </p>
+              <div className="flex flex-wrap items-center justify-end gap-3">
+                <Select
+                  ariaLabel="Select workspace"
+                  className="min-w-[220px] bg-transparent text-sm font-medium"
+                  containerClassName="min-w-[220px]"
+                  loading={workspaceSwitch.isPending}
+                  options={
+                    workspaces.length
+                      ? workspaces.map((workspace) => ({
+                          label: workspace.name,
+                          value: workspace.workspace_id
+                        }))
+                      : [{ label: workspaceName || "Current workspace", value: workspaceId }]
+                  }
+                  placeholder="Current workspace"
+                  size="sm"
+                  value={selectedWorkspaceId}
+                  onChange={(event) =>
+                    void workspaceSwitch.run(() => handleWorkspaceChange(event.target.value))
+                  }
+                />
+                <button
+                  className="relative inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-border bg-white text-[#6D6D78] transition hover:text-[#17171F]"
+                  type="button"
+                >
+                  <Bell size={18} />
+                  <span className="absolute -right-1 top-1 inline-flex min-w-5 -translate-y-1/2 items-center justify-center rounded-full border-2 border-[rgba(247,247,249,0.94)] bg-accent px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white">
+                    {notifications.length}
+                  </span>
+                </button>
+                <button
+                  className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-border bg-white text-[#6D6D78] transition hover:text-[#17171F] disabled:pointer-events-none disabled:opacity-60"
+                  disabled={signOutAction.isPending}
+                  onClick={() => setIsLogoutOpen(true)}
+                  type="button"
+                >
+                  <LogOut size={18} />
+                </button>
               </div>
             </div>
           </div>
+
+          {isApiLoading ? (
+            <div aria-hidden="true" className="overflow-hidden border-t border-border/60">
+              <div className="h-0.5 w-full bg-[rgba(102,89,255,0.12)]">
+                <div className="h-full w-1/3 animate-[pulse_900ms_ease-in-out_infinite] rounded-full bg-accent" />
+              </div>
+            </div>
+          ) : null}
 
           <div className="border-t border-border px-4 py-3 lg:hidden">
             <div className="flex gap-2 overflow-x-auto pb-1">
@@ -191,7 +269,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                   <Link
                     key={item.href}
                     className={cn(
-                      "whitespace-nowrap rounded-xl px-3 py-2 text-sm font-medium transition",
+                      "inline-flex items-center gap-2 whitespace-nowrap rounded-xl px-3 py-2 text-sm font-medium transition",
                       active
                         ? "bg-[rgba(102,89,255,0.12)] text-accent"
                         : "bg-white text-[#6D6D78]"
@@ -199,42 +277,29 @@ export function AppShell({ children }: { children: ReactNode }) {
                     href={item.href}
                   >
                     {item.label}
+                    {item.soon ? (
+                      <span className="rounded-full bg-[#F1F0FF] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-accent">
+                        Soon
+                      </span>
+                    ) : null}
                   </Link>
                 );
               })}
             </div>
           </div>
-
-          {notifications.length ? (
-            <div className="border-t border-border px-6 py-3 lg:px-8">
-              <div className="flex flex-wrap gap-3">
-                {notifications.slice(0, 3).map((notification) => (
-                  <div
-                    key={notification.id}
-                    className="flex min-w-[280px] flex-1 items-start justify-between gap-3 rounded-2xl border border-border bg-white px-4 py-3"
-                  >
-                    <Link className="min-w-0 flex-1" href={notification.href}>
-                      <div className="flex items-center gap-2">
-                        <p className="truncate text-sm font-medium">{notification.title}</p>
-                        <Badge tone={notification.tone}>{notification.tone === "success" ? "Live" : "Attention"}</Badge>
-                      </div>
-                      <p className="mt-1 text-sm leading-6 text-[#6D6D78]">{notification.message}</p>
-                    </Link>
-                    <button
-                      className="rounded-xl border border-border p-2 text-[#8A8A97] transition hover:text-[#17171F]"
-                      onClick={() => dismissNotification(notification.id)}
-                      type="button"
-                    >
-                      <X size={14} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
         </header>
 
         <main className="px-6 py-6 lg:px-8">{children}</main>
+
+        <ConfirmActionModal
+          title="Sign out"
+          description="Are you sure you want to end the current session?"
+          confirmLabel="Sign out"
+          isOpen={isLogoutOpen}
+          isPending={signOutAction.isPending}
+          onClose={() => setIsLogoutOpen(false)}
+          onConfirm={() => void signOutAction.run(handleSignOut)}
+        />
       </div>
     </div>
   );

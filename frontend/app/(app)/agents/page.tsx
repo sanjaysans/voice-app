@@ -4,7 +4,8 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { ArrowRight, Bot, Plus, Search, Sparkles, Trash2 } from "lucide-react";
 import { useMockApp } from "@/lib/mock-app";
-import { Badge, Button, Card, EmptyState, Input, PageHeader } from "@/components/ui";
+import { useAsyncAction, useKeyedAsyncAction } from "@/lib/use-async-action";
+import { Badge, Button, Card, ConfirmActionModal, EmptyState, Input, PageHeader } from "@/components/ui";
 
 const filters = ["All", "Published", "Draft"];
 
@@ -13,6 +14,10 @@ export default function AgentsPage() {
   const { agents, selectedAgentId, selectAgent, createNewAgent, deleteAgent } = useMockApp();
   const [filter, setFilter] = useState("All");
   const [query, setQuery] = useState("");
+  const createAction = useAsyncAction();
+  const deleteAction = useKeyedAsyncAction();
+  const [pendingRoute, setPendingRoute] = useState<string | null>(null);
+  const [agentToDelete, setAgentToDelete] = useState<{ id: string; name: string } | null>(null);
 
   const filteredAgents = agents.filter((agent) => {
     const matchesFilter = filter === "All" ? true : agent.status === filter;
@@ -37,7 +42,11 @@ export default function AgentsPage() {
             <Button asChild href="/agents/builder" variant="secondary">
               Open studio
             </Button>
-            <Button onClick={handleCreateAgent}>
+            <Button
+              loading={createAction.isPending}
+              loadingText="Creating agent"
+              onClick={() => void createAction.run(handleCreateAgent)}
+            >
               <Plus size={16} />
               New agent
             </Button>
@@ -129,8 +138,11 @@ export default function AgentsPage() {
                     <p className="text-sm text-[#6D6D78]">Last edited {agent.lastEdited}</p>
                     <div className="flex flex-wrap gap-3">
                       <Button
+                        loading={pendingRoute === `calls:${agent.id}`}
+                        loadingText="Opening calls"
                         variant="secondary"
                         onClick={() => {
+                          setPendingRoute(`calls:${agent.id}`);
                           selectAgent(agent.id);
                           router.push("/calls");
                         }}
@@ -140,7 +152,9 @@ export default function AgentsPage() {
                       <Button
                         variant="ghost"
                         disabled={agents.length === 1}
-                        onClick={() => void deleteAgent(agent.id)}
+                        loading={deleteAction.pendingKey === `delete:${agent.id}`}
+                        loadingText="Deleting"
+                        onClick={() => setAgentToDelete({ id: agent.id, name: agent.name })}
                         title={
                           agents.length === 1
                             ? "Keep at least one workflow in the prototype"
@@ -151,8 +165,10 @@ export default function AgentsPage() {
                         Delete
                       </Button>
                       <button
-                        className="inline-flex items-center gap-2 text-sm font-medium text-accent"
+                        className="inline-flex items-center gap-2 text-sm font-medium text-accent disabled:pointer-events-none disabled:opacity-60"
+                        disabled={pendingRoute === `builder:${agent.id}`}
                         onClick={() => {
+                          setPendingRoute(`builder:${agent.id}`);
                           selectAgent(agent.id);
                           router.push("/agents/builder");
                         }}
@@ -174,6 +190,28 @@ export default function AgentsPage() {
           />
         )}
       </Card>
+
+      <ConfirmActionModal
+        title="Delete workflow"
+        description={
+          agentToDelete
+            ? `Delete ${agentToDelete.name}? This removes the workflow from the prototype and cannot be undone.`
+            : "Delete this workflow? This action cannot be undone."
+        }
+        confirmLabel="Delete workflow"
+        isOpen={Boolean(agentToDelete)}
+        isPending={deleteAction.pendingKey === `delete:${agentToDelete?.id ?? ""}`}
+        onClose={() => setAgentToDelete(null)}
+        onConfirm={() => {
+          if (!agentToDelete) {
+            return;
+          }
+          void deleteAction.run(`delete:${agentToDelete.id}`, async () => {
+            await deleteAgent(agentToDelete.id);
+            setAgentToDelete(null);
+          });
+        }}
+      />
     </div>
   );
 }

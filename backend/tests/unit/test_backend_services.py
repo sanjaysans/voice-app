@@ -1,7 +1,14 @@
+from uuid import uuid4
+
+import pytest
+
+from voice_backend.config import Settings
 from voice_backend.schemas import (
     AgentDefinitionCreateInput,
     AgentDefinitionUpdateInput,
+    AgentStudioUpdateInput,
     AgentVersionCreateInput,
+    BrowserRtcSessionCreateInput,
     CallReviewCreateInput,
     CallReviewUpdateInput,
     ProviderAccountCreateInput,
@@ -19,6 +26,7 @@ from voice_backend.services import (
     CallHistoryService,
     CallReviewService,
     ProviderAccountAdminService,
+    RealtimeSessionService,
     TeamAdminService,
     TenantAdminService,
     TenantOverviewService,
@@ -139,6 +147,47 @@ def test_provider_account_admin_service_updates_existing_account(session, seeded
     assert updated.has_config is True
 
 
+def test_provider_account_admin_service_runs_health_check(session, seeded_domain, monkeypatch) -> None:
+    service = ProviderAccountAdminService(session)
+
+    created = service.create_account(
+        "voice-demo",
+        ProviderAccountCreateInput(
+            provider_kind="stt",
+            vendor_name="deepgram",
+            label="Deepgram Live",
+            status="draft",
+            config={"api_key": "dg_live_key"},
+        ),
+    )
+
+    class DummyResponse:
+        status_code = 200
+
+    class DummyClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def get(self, *args, **kwargs):
+            return DummyResponse()
+
+    monkeypatch.setattr("voice_backend.services.provider_account_admin.httpx.Client", DummyClient)
+
+    assert created is not None
+    checked = service.run_health_check("voice-demo", created.provider_account_id)
+
+    assert checked is not None
+    assert checked.status == "active"
+    assert checked.preview["ui_status"] == "Connected"
+    assert "passed the live Deepgram credential check" in str(checked.preview["detail"])
+
+
 def test_agent_definition_admin_service_creates_and_versions_agent(session, seeded_domain) -> None:
     service = AgentDefinitionAdminService(session)
 
@@ -184,6 +233,43 @@ def test_agent_definition_admin_service_creates_and_versions_agent(session, seed
     assert versioned.latest_version.version_number == 2
     assert versioned.latest_version.pipeline_mode == "realtime_s2s"
     assert len(versioned.versions) == 2
+
+
+def test_agent_definition_admin_service_persists_runtime_profile(session, seeded_domain) -> None:
+    service = AgentDefinitionAdminService(session)
+
+    created = service.create_agent(
+        "voice-demo",
+        seeded_domain["workspace"].id,
+        AgentDefinitionCreateInput(
+            agent_key="runtime-router",
+            name="Runtime Router",
+            status="draft",
+            initial_version=AgentVersionCreateInput(
+                pipeline_mode="stt_llm_tts",
+                routing_config={},
+                vendor_config={},
+            ),
+        ),
+    )
+
+    updated = service.update_studio(
+        "voice-demo",
+        seeded_domain["workspace"].id,
+        created.agent_id,
+        AgentStudioUpdateInput(
+            runtime_profile={
+                "pipelineMode": "stt_llm_tts",
+                "stt": {"providerAccountId": "stt-1", "model": "flux-general-en"},
+                "llm": {"providerAccountId": "llm-1", "model": "gpt-4.1-mini"},
+                "tts": {"providerAccountId": "tts-1", "model": "sonic-3"},
+            }
+        ),
+    )
+
+    assert updated is not None
+    assert updated.latest_version is not None
+    assert updated.latest_version.vendor_config["runtime_profile"]["stt"]["providerAccountId"] == "stt-1"
 
 
 def test_agent_catalog_service_returns_none_for_workspace_outside_tenant(
@@ -234,6 +320,7 @@ def test_workspace_state_service_returns_workspace_operating_state(session, seed
     assert state.workspace.name == "Sales"
     assert len(state.agents) == 1
     assert len(state.calls) == 2
+    assert state.agents[0].runtime_profile == {}
 
 
 def test_team_admin_service_supports_member_lifecycle(session, seeded_domain) -> None:
@@ -300,3 +387,86 @@ def test_call_review_service_supports_create_update_and_delete(session, seeded_d
     assert updated.synced_to_crm is True
     assert updated.next_step == "Synced to CRM timeline."
     assert deleted is True
+
+
+@pytest.mark.asyncio
+async def test_realtime_session_service_builds_join_credentials(monkeypatch) -> None:
+    manifest_response = {
+        "session": {"room_name": "voice-room-local", "participant_identity": "web-user-1"},
+        "dispatch_agent_name": "voice-router-agent",
+        "dispatch_metadata": '{"stt": {"api_key": "dg-key"}}',
+        "runtime": {"transport": "livekit"},
+        "warnings": [],
+        "errors": [],
+    }
+
+    class StubResponse:
+        status_code = 200
+
+        def json(self):
+            return manifest_response
+
+    class StubAsyncClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return None
+
+        async def post(self, _url, json):
+            assert json["dispatch_agent_name"] == "voice-router-agent"
+            return StubResponse()
+
+    class StubDispatch:
+        id = "dispatch-123"
+
+    class StubRoomService:
+        async def create_room(self, _request):
+            return None
+
+    class StubAgentDispatchService:
+        async def create_dispatch(self, _request):
+            return StubDispatch()
+
+    class StubLiveKitAPI:
+        def __init__(self, **kwargs) -> None:
+            self.room = StubRoomService()
+            self.agent_dispatch = StubAgentDispatchService()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return None
+
+    monkeypatch.setattr(
+        "voice_backend.services.realtime_session.httpx.AsyncClient",
+        lambda *args, **kwargs: StubAsyncClient(),
+    )
+    monkeypatch.setattr(
+        "voice_backend.services.realtime_session.LiveKitAPI",
+        StubLiveKitAPI,
+    )
+
+    service = RealtimeSessionService(
+        Settings(
+            _env_file=None,
+            database_url="sqlite+pysqlite:///:memory:",
+            pipeline_base_url="http://127.0.0.1:8101",
+        )
+    )
+    created = await service.create_browser_session(
+        BrowserRtcSessionCreateInput(
+            stt={"api_key": "dg-key"},
+            llm={"api_key": "oa-key"},
+            tts={"api_key": "ca-key"},
+        ),
+        user_id=uuid4(),
+        display_name="Voice Admin",
+    )
+
+    assert created.room_name == "voice-room-local"
+    assert created.dispatch_id == "dispatch-123"
+    assert created.dispatch_agent_name == "voice-router-agent"
+    assert created.server_url == "ws://127.0.0.1:7880"
+    assert created.participant_name == "Voice Admin"
