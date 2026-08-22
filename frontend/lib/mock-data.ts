@@ -21,6 +21,14 @@ export type FlowNode = {
   vendors: VendorStack;
 };
 
+export type FlowEdge = {
+  id: string;
+  sourceId: string;
+  targetId: string;
+  label: string;
+  condition: string;
+};
+
 export type AgentTool = {
   id: string;
   name: string;
@@ -40,6 +48,7 @@ export type Agent = {
   id: string;
   name: string;
   description: string;
+  sharedPrompt: string;
   status: "Draft" | "Published";
   statusTone: "warning" | "success";
   lastEdited: string;
@@ -48,10 +57,12 @@ export type Agent = {
   stack: VendorStack;
   runtimeProfile: AgentRuntimeProfile;
   flowNodes: FlowNode[];
-  flowEdges: Array<[string, string]>;
+  flowEdges: FlowEdge[];
   toolsCatalog: AgentTool[];
   knowledgeSources: KnowledgeSource[];
 };
+
+export type AgentCreationMode = "empty" | "template";
 
 export type DemoScenario = {
   id: string;
@@ -291,8 +302,8 @@ export function createFlowNodes(name = "Lead qualification voice agent"): FlowNo
       tone: "success",
       state: "Intent and context check",
       prompt: `Open the conversation for ${name}, confirm the caller's goal, and route to the best next step within two turns.`,
-      tools: ["intent_classifier", "crm_lookup"],
-      knowledge: ["Brand overview", "Calling policy"],
+      tools: [],
+      knowledge: [],
       vendors: { ...defaultStack }
     },
     {
@@ -303,8 +314,8 @@ export function createFlowNodes(name = "Lead qualification voice agent"): FlowNo
       tone: "success",
       state: "Fit and urgency scoring",
       prompt: "Capture use case, urgency, team size, and conversion signals without sounding scripted.",
-      tools: ["lead_score", "crm_update"],
-      knowledge: ["Qualification playbook", "Discovery prompts"],
+      tools: [],
+      knowledge: [],
       vendors: { ...defaultStack }
     },
     {
@@ -315,8 +326,8 @@ export function createFlowNodes(name = "Lead qualification voice agent"): FlowNo
       tone: "warning",
       state: "Offer next best action",
       prompt: "Move qualified callers to the right next step: booking, transfer, quote request, or human follow-up.",
-      tools: ["calendar_hold", "quote_request"],
-      knowledge: ["Pricing guide", "Objection handling"],
+      tools: [],
+      knowledge: [],
       vendors: { ...defaultStack }
     },
     {
@@ -327,8 +338,8 @@ export function createFlowNodes(name = "Lead qualification voice agent"): FlowNo
       tone: "warning",
       state: "Retry and nurture",
       prompt: "Handle voicemail, no-answer, or soft-interest outcomes with compliant callbacks and task creation.",
-      tools: ["retry_schedule", "task_create"],
-      knowledge: ["Calling window policy", "Follow-up sequences"],
+      tools: [],
+      knowledge: [],
       vendors: { ...defaultStack }
     },
     {
@@ -339,19 +350,49 @@ export function createFlowNodes(name = "Lead qualification voice agent"): FlowNo
       tone: "warning",
       state: "Handoff and summary",
       prompt: "Escalate gracefully when the caller needs a human, and generate a tight handoff summary with next actions.",
-      tools: ["page_rep", "summary_writeback"],
-      knowledge: ["Escalation policy"],
+      tools: [],
+      knowledge: [],
       vendors: { ...defaultStack }
     }
   ];
 }
 
-const defaultEdges: Array<[string, string]> = [
-  ["router", "qualify"],
-  ["router", "convert"],
-  ["router", "follow_up"],
-  ["qualify", "escalation"],
-  ["convert", "escalation"]
+const defaultEdges: FlowEdge[] = [
+  {
+    id: "edge_router_qualify",
+    sourceId: "router",
+    targetId: "qualify",
+    label: "Needs qualification",
+    condition: "Use this when the caller intent is still being qualified and basic fit needs to be assessed."
+  },
+  {
+    id: "edge_router_convert",
+    sourceId: "router",
+    targetId: "convert",
+    label: "Ready for next action",
+    condition: "Use this when intent is clear and the caller is ready to move toward booking, quote, or transfer."
+  },
+  {
+    id: "edge_router_follow_up",
+    sourceId: "router",
+    targetId: "follow_up",
+    label: "Needs later follow-up",
+    condition: "Use this when there is no live resolution, voicemail is reached, or the caller asks for a callback."
+  },
+  {
+    id: "edge_qualify_escalation",
+    sourceId: "qualify",
+    targetId: "escalation",
+    label: "Human help required",
+    condition: "Escalate when the caller requests a human, asks for exception handling, or enters a sensitive path."
+  },
+  {
+    id: "edge_convert_escalation",
+    sourceId: "convert",
+    targetId: "escalation",
+    label: "Cannot complete in bot",
+    condition: "Escalate if the workflow cannot complete the promised next action safely."
+  }
 ];
 
 export const initialAgents: Agent[] = [
@@ -359,6 +400,7 @@ export const initialAgents: Agent[] = [
     id: "agent_growth",
     name: "Growth inbound",
     description: "Handles inbound qualification and routes qualified buyers into the best next action.",
+    sharedPrompt: "Stay concise, confident, and outcome-driven. Confirm intent quickly, preserve trust, and only move forward when the caller has clearly agreed.",
     status: "Published",
     statusTone: "success",
     lastEdited: "18 minutes ago",
@@ -368,22 +410,14 @@ export const initialAgents: Agent[] = [
     runtimeProfile: buildDefaultRuntimeProfile(),
     flowNodes: createFlowNodes("Growth inbound"),
     flowEdges: defaultEdges,
-    toolsCatalog: [
-      { id: "crm_lookup", name: "CRM lookup", description: "Pull account history and owner before responding.", enabled: true },
-      { id: "lead_score", name: "Lead scoring", description: "Score fit from role, volume, urgency, and use case.", enabled: true },
-      { id: "calendar_hold", name: "Calendar booking", description: "Reserve the next best meeting slot live in-call.", enabled: true },
-      { id: "task_create", name: "Task creation", description: "Queue a human follow-up when the call is not ready to convert.", enabled: true }
-    ],
-    knowledgeSources: [
-      { id: "kb_brand", name: "Brand overview", description: "Positioning, differentiation, and product intro.", status: "Connected", enabled: true },
-      { id: "kb_pricing", name: "Pricing guide", description: "Packages, thresholds, and expansion scenarios.", status: "Connected", enabled: true },
-      { id: "kb_objections", name: "Objection handling", description: "Approved responses for common concerns.", status: "Syncing", enabled: true }
-    ]
+    toolsCatalog: [],
+    knowledgeSources: []
   },
   {
     id: "agent_reactivation",
     name: "Pipeline reactivation",
     description: "Re-engages stale opportunities, updates disposition, and books a human follow-up when intent returns.",
+    sharedPrompt: "Keep the conversation light, respectful, and low-pressure. Focus on what changed, whether urgency has returned, and the cleanest next human step.",
     status: "Draft",
     statusTone: "warning",
     lastEdited: "Yesterday",
@@ -397,21 +431,14 @@ export const initialAgents: Agent[] = [
         : node
     ),
     flowEdges: defaultEdges,
-    toolsCatalog: [
-      { id: "crm_lookup", name: "CRM lookup", description: "Recover prior opportunity history and ownership.", enabled: true },
-      { id: "task_create", name: "Task creation", description: "Create the next touchpoint automatically.", enabled: true },
-      { id: "calendar_hold", name: "Calendar booking", description: "Book calls only for re-qualified opportunities.", enabled: false },
-      { id: "retry_schedule", name: "Retry scheduling", description: "Set compliant retry windows for no-answer outcomes.", enabled: true }
-    ],
-    knowledgeSources: [
-      { id: "kb_brand", name: "Brand overview", description: "Updated value proposition and market examples.", status: "Connected", enabled: true },
-      { id: "kb_reactivation", name: "Reactivation scripts", description: "Lightweight openers and objection responses.", status: "Connected", enabled: true }
-    ]
+    toolsCatalog: [],
+    knowledgeSources: []
   },
   {
     id: "agent_multistep",
     name: "General conversion desk",
     description: "A generic calling workflow for qualification, conversion, and handoff across multiple verticals.",
+    sharedPrompt: "Act like a reusable production workflow. Stay neutral across industries, gather structured outcomes, and choose the clearest next action.",
     status: "Published",
     statusTone: "success",
     lastEdited: "3 days ago",
@@ -421,16 +448,8 @@ export const initialAgents: Agent[] = [
     runtimeProfile: buildDefaultRuntimeProfile(),
     flowNodes: createFlowNodes("General conversion desk"),
     flowEdges: defaultEdges,
-    toolsCatalog: [
-      { id: "crm_lookup", name: "CRM lookup", description: "Bring prior context into the first turn.", enabled: true },
-      { id: "lead_score", name: "Lead scoring", description: "Produce a reusable qualification score.", enabled: true },
-      { id: "calendar_hold", name: "Calendar booking", description: "Book or transfer when qualified.", enabled: true },
-      { id: "summary_writeback", name: "Summary writeback", description: "Save structured call outcomes after completion.", enabled: true }
-    ],
-    knowledgeSources: [
-      { id: "kb_brand", name: "Brand overview", description: "Core positioning and product truth set.", status: "Connected", enabled: true },
-      { id: "kb_policy", name: "Calling policy", description: "Consent, retries, and safe operating rules.", status: "Connected", enabled: true }
-    ]
+    toolsCatalog: [],
+    knowledgeSources: []
   }
 ];
 
@@ -595,32 +614,28 @@ export const initialNotifications: NotificationItem[] = [
   }
 ];
 
-export function createAgent(name: string): Agent {
+export function createAgent(name: string, mode: AgentCreationMode = "template"): Agent {
   const id = `agent_${name.toLowerCase().replace(/[^a-z0-9]+/g, "_")}_${Math.random().toString(36).slice(2, 6)}`;
+  const isTemplate = mode === "template";
 
   return {
     id,
     name,
-    description: "New reusable voice workflow for routing, service, qualification, and follow-up.",
+    description: isTemplate
+      ? "New reusable voice workflow for routing, service, qualification, and follow-up."
+      : "",
+    sharedPrompt: "",
     status: "Draft",
     statusTone: "warning",
     lastEdited: "Just now",
-    segment: "New workflow",
-    goal: "Shape the first working version of the workflow before production rollout.",
+    segment: "",
+    goal: "",
     stack: { ...defaultStack },
     runtimeProfile: buildDefaultRuntimeProfile(),
-    flowNodes: createFlowNodes(name),
-    flowEdges: defaultEdges,
-    toolsCatalog: [
-      { id: "crm_lookup", name: "CRM lookup", description: "Pull existing lead history into the first turn.", enabled: true },
-      { id: "lead_score", name: "Lead scoring", description: "Convert conversation signals into a reusable score.", enabled: true },
-      { id: "calendar_hold", name: "Calendar booking", description: "Book the next step for qualified calls.", enabled: false },
-      { id: "task_create", name: "Task creation", description: "Assign the next human action when needed.", enabled: true }
-    ],
-    knowledgeSources: [
-      { id: "kb_brand", name: "Brand overview", description: "Core positioning and promise.", status: "Connected", enabled: true },
-      { id: "kb_policy", name: "Calling policy", description: "Consent and retry rules.", status: "Connected", enabled: true }
-    ]
+    flowNodes: isTemplate ? createFlowNodes(name) : [],
+    flowEdges: isTemplate ? defaultEdges : [],
+    toolsCatalog: [],
+    knowledgeSources: []
   };
 }
 

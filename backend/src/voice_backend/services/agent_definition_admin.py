@@ -7,6 +7,7 @@ from voice_backend.repositories import AgentRepository, TenantRepository, Worksp
 from voice_backend.schemas import (
     AgentDefinitionCreateInput,
     AgentDefinitionRecord,
+    AgentStudioRecord,
     AgentDefinitionUpdateInput,
     AgentStudioUpdateInput,
     AgentVersionCreateInput,
@@ -14,6 +15,56 @@ from voice_backend.schemas import (
 )
 
 logger = get_logger(__name__)
+
+
+def _title_case_status(status: str) -> str:
+    return " ".join(part.capitalize() for part in status.replace("_", " ").split())
+
+
+def _status_tone(status: str) -> str:
+    return "success" if status == "published" else "warning" if status == "draft" else "neutral"
+
+
+def _relative_label(timestamp) -> str:
+    if timestamp is None:
+        return "Unknown"
+    delta = datetime.now(UTC) - timestamp.astimezone(UTC)
+    minutes = max(int(delta.total_seconds() // 60), 0)
+    if minutes < 1:
+        return "Just now"
+    if minutes < 60:
+        return f"{minutes} minutes ago"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours} hours ago"
+    days = hours // 24
+    return f"{days} days ago"
+
+
+def _normalize_flow_edges(raw_edges) -> list[dict[str, str]]:
+    normalized: list[dict[str, str]] = []
+    for index, edge in enumerate(raw_edges or []):
+        if isinstance(edge, dict):
+            normalized.append(
+                {
+                    "id": str(edge.get("id", f"edge_{index}")),
+                    "source_id": str(edge.get("source_id", "")),
+                    "target_id": str(edge.get("target_id", "")),
+                    "label": str(edge.get("label", "")),
+                    "condition": str(edge.get("condition", "")),
+                }
+            )
+        elif isinstance(edge, (list, tuple)) and len(edge) >= 2:
+            normalized.append(
+                {
+                    "id": f"edge_{index}",
+                    "source_id": str(edge[0]),
+                    "target_id": str(edge[1]),
+                    "label": "",
+                    "condition": "",
+                }
+            )
+    return normalized
 
 
 def _to_version_record(version) -> AgentVersionRecord:
@@ -41,6 +92,36 @@ def _to_record(agent) -> AgentDefinitionRecord:
         updated_at=agent.updated_at,
         versions=versions,
         latest_version=versions[-1] if versions else None,
+    )
+
+
+def _to_studio_record(agent) -> AgentStudioRecord:
+    latest_version = agent.versions[-1] if agent.versions else None
+    routing_config = latest_version.routing_config if latest_version is not None else {}
+    vendor_config = latest_version.vendor_config if latest_version is not None else {}
+    return AgentStudioRecord(
+        agent_id=agent.id,
+        workspace_id=agent.workspace_id,
+        agent_key=agent.agent_key,
+        name=agent.name,
+        description=str(routing_config.get("description", "")),
+        shared_prompt=str(routing_config.get("shared_prompt", "")),
+        status=_title_case_status(agent.status),
+        status_tone=_status_tone(agent.status),
+        last_edited=_relative_label(agent.updated_at),
+        segment=str(routing_config.get("segment", "")),
+        goal=str(routing_config.get("goal", "")),
+        stack=vendor_config.get(
+            "stack",
+            {"stt": "Deepgram", "llm": "GPT-4.1", "tts": "ElevenLabs"},
+        ),
+        runtime_profile=vendor_config.get("runtime_profile", {}),
+        flow_nodes=routing_config.get("flow_nodes", []),
+        flow_edges=_normalize_flow_edges(routing_config.get("flow_edges", [])),
+        tools_catalog=routing_config.get("tools_catalog", []),
+        knowledge_sources=routing_config.get("knowledge_sources", []),
+        latest_version_number=latest_version.version_number if latest_version is not None else None,
+        latest_pipeline_mode=latest_version.pipeline_mode if latest_version is not None else None,
     )
 
 
@@ -150,7 +231,7 @@ class AgentDefinitionAdminService:
         workspace_id,
         agent_id,
         payload: AgentStudioUpdateInput,
-    ) -> AgentDefinitionRecord | None:
+    ) -> AgentStudioRecord | None:
         tenant = self.tenants.get_by_slug(tenant_slug)
         if tenant is None:
             return None
@@ -173,6 +254,8 @@ class AgentDefinitionAdminService:
         vendor_config = dict(latest_version.vendor_config or {})
         if payload.description is not None:
             routing_config["description"] = payload.description
+        if payload.shared_prompt is not None:
+            routing_config["shared_prompt"] = payload.shared_prompt
         if payload.segment is not None:
             routing_config["segment"] = payload.segment
         if payload.goal is not None:
@@ -180,7 +263,7 @@ class AgentDefinitionAdminService:
         if payload.flow_nodes is not None:
             routing_config["flow_nodes"] = [item.model_dump() for item in payload.flow_nodes]
         if payload.flow_edges is not None:
-            routing_config["flow_edges"] = payload.flow_edges
+            routing_config["flow_edges"] = [item.model_dump() for item in payload.flow_edges]
         if payload.tools_catalog is not None:
             routing_config["tools_catalog"] = [item.model_dump() for item in payload.tools_catalog]
         if payload.knowledge_sources is not None:
@@ -209,7 +292,7 @@ class AgentDefinitionAdminService:
         )
         refreshed = self.agents.get_definition_for_workspace(tenant.id, workspace.id, agent.id)
         logger.info("agent_definition.studio_updated", tenant_id=str(tenant.id), agent_id=str(agent.id))
-        return _to_record(refreshed)
+        return _to_studio_record(refreshed)
 
     def delete_agent(self, tenant_slug: str, workspace_id, agent_id) -> bool:
         tenant = self.tenants.get_by_slug(tenant_slug)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -7,6 +8,13 @@ from sqlalchemy.orm import Session
 from voice_backend.repositories import MembershipRepository, UserRepository
 from voice_backend.schemas import SessionMembershipRecord, SessionRecord, SessionUserRecord
 from voice_backend.security import verify_password
+
+SESSION_CACHE_TTL = timedelta(minutes=5)
+_SESSION_CACHE: dict[UUID, tuple[datetime, SessionRecord]] = {}
+
+
+def clear_session_cache() -> None:
+    _SESSION_CACHE.clear()
 
 
 class AuthenticationService:
@@ -20,12 +28,20 @@ class AuthenticationService:
             return None
         if not verify_password(password, user.password_hash):
             return None
-        return self._build_session(user.id)
+        return self._build_session(user.id, force_refresh=True)
 
     def get_session(self, user_id: UUID) -> SessionRecord | None:
         return self._build_session(user_id)
 
-    def _build_session(self, user_id: UUID) -> SessionRecord | None:
+    def _build_session(self, user_id: UUID, *, force_refresh: bool = False) -> SessionRecord | None:
+        if not force_refresh:
+            cached = _SESSION_CACHE.get(user_id)
+            if cached is not None:
+                expires_at, session_record = cached
+                if expires_at > datetime.now(UTC):
+                    return session_record.model_copy(deep=True)
+                _SESSION_CACHE.pop(user_id, None)
+
         user = self.users.get_by_id(user_id)
         if user is None:
             return None
@@ -48,7 +64,7 @@ class AuthenticationService:
             memberships[0] if memberships else None,
         )
 
-        return SessionRecord(
+        record = SessionRecord(
             user=SessionUserRecord(
                 user_id=user.id,
                 email=user.email,
@@ -58,3 +74,5 @@ class AuthenticationService:
             memberships=memberships,
             active_membership=active_membership,
         )
+        _SESSION_CACHE[user_id] = (datetime.now(UTC) + SESSION_CACHE_TTL, record)
+        return record.model_copy(deep=True)

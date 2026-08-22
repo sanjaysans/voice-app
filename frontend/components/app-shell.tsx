@@ -15,15 +15,14 @@ import {
   Phone,
   Puzzle,
   Radio,
+  Route,
   ScrollText,
   Shield,
-  Route,
   Sparkles,
   Settings2,
   Users,
   Webhook,
 } from "lucide-react";
-import { api } from "@/lib/api-client";
 import { useApiActivity } from "@/lib/api-activity";
 import { useMockApp } from "@/lib/mock-app";
 import { useAsyncAction } from "@/lib/use-async-action";
@@ -53,7 +52,6 @@ const navSections = [
     label: "Build",
     items: [
       { href: "/agents", label: "Agents", icon: Mic },
-      { href: "/agents/builder", label: "Studio", icon: Route },
       { href: "/prompts", label: "Prompts", icon: Route, soon: true },
       { href: "/knowledge-base", label: "Knowledge", icon: FolderKanban, soon: true },
       { href: "/tools", label: "Tools", icon: Puzzle, soon: true },
@@ -103,11 +101,12 @@ function NavLink({ item, active }: { item: NavItem; active: boolean }) {
   );
 }
 
-type WorkspaceOption = {
-  workspace_id: string;
-  name: string;
-  is_default: boolean;
-};
+function isNavItemActive(pathname: string, href: string) {
+  if (href === "/agents") {
+    return pathname === "/agents" || pathname.startsWith("/agents/");
+  }
+  return pathname === href;
+}
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
@@ -115,12 +114,11 @@ export function AppShell({ children }: { children: ReactNode }) {
     currentUser,
     notifications,
     signOut,
-    tenantSlug,
     workspaceId,
     workspaceName,
+    workspaceOptions,
     reloadWorkspaceContext,
   } = useMockApp();
-  const [workspaces, setWorkspaces] = useState<WorkspaceOption[]>([]);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState("");
   const [isLogoutOpen, setIsLogoutOpen] = useState(false);
   const workspaceSwitch = useAsyncAction();
@@ -136,17 +134,6 @@ export function AppShell({ children }: { children: ReactNode }) {
   useEffect(() => {
     setSelectedWorkspaceId(workspaceId);
   }, [workspaceId]);
-
-  useEffect(() => {
-    if (!tenantSlug) {
-      setWorkspaces([]);
-      return;
-    }
-
-    void api<WorkspaceOption[]>(`/api/v1/tenants/${tenantSlug}/workspaces`)
-      .then(setWorkspaces)
-      .catch(() => setWorkspaces([]));
-  }, [tenantSlug, workspaceId]);
 
   async function handleWorkspaceChange(nextWorkspaceId: string) {
     setSelectedWorkspaceId(nextWorkspaceId);
@@ -182,7 +169,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 </p>
                 <div className="mt-2 space-y-2">
                   {section.items.map((item) => {
-                    const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+                    const active = isNavItemActive(pathname, item.href);
                     return <NavLink key={item.href} item={item} active={active} />;
                   })}
                 </div>
@@ -218,8 +205,8 @@ export function AppShell({ children }: { children: ReactNode }) {
                   containerClassName="min-w-[220px]"
                   loading={workspaceSwitch.isPending}
                   options={
-                    workspaces.length
-                      ? workspaces.map((workspace) => ({
+                    workspaceOptions.length
+                      ? workspaceOptions.map((workspace) => ({
                           label: workspace.name,
                           value: workspace.workspace_id
                         }))
@@ -264,7 +251,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div className="border-t border-border px-4 py-3 lg:hidden">
             <div className="flex gap-2 overflow-x-auto pb-1">
               {navSections.flatMap((section) => section.items).map((item) => {
-                const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+                const active = isNavItemActive(pathname, item.href);
                 return (
                   <Link
                     key={item.href}

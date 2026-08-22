@@ -125,6 +125,7 @@ def build_demo_agents(tenant_id, workspace_id) -> list[dict[str, object]]:
                 "pipeline_mode": "stt_llm_tts",
                 "routing_config": {
                     "description": "Routes qualification, booking, and escalation paths for generic lead workflows.",
+                    "shared_prompt": "Stay concise, qualify clearly, and only move to the next state when intent is explicit.",
                     "segment": "Qualification",
                     "goal": "Qualify and convert high-intent leads.",
                     "flow_nodes": [
@@ -136,8 +137,8 @@ def build_demo_agents(tenant_id, workspace_id) -> list[dict[str, object]]:
                             "tone": "neutral",
                             "state": "Intent detection",
                             "prompt": "Classify whether the lead needs qualification, support, or escalation.",
-                            "tools": ["crm_lookup", "calendar_booking"],
-                            "knowledge": ["playbook", "pricing"],
+                            "tools": [],
+                            "knowledge": [],
                             "vendors": {"stt": "Deepgram", "llm": "GPT-4.1", "tts": "ElevenLabs"},
                         },
                         {
@@ -148,8 +149,8 @@ def build_demo_agents(tenant_id, workspace_id) -> list[dict[str, object]]:
                             "tone": "success",
                             "state": "Fit scoring",
                             "prompt": "Capture company, need, timing, and next step.",
-                            "tools": ["crm_lookup", "calendar_booking"],
-                            "knowledge": ["playbook"],
+                            "tools": [],
+                            "knowledge": [],
                             "vendors": {"stt": "Deepgram", "llm": "GPT-4.1", "tts": "ElevenLabs"},
                         },
                         {
@@ -160,42 +161,29 @@ def build_demo_agents(tenant_id, workspace_id) -> list[dict[str, object]]:
                             "tone": "warning",
                             "state": "Human assist",
                             "prompt": "Escalate compliance or edge-case calls to a human operator.",
-                            "tools": ["crm_lookup"],
-                            "knowledge": ["policy"],
+                            "tools": [],
+                            "knowledge": [],
                             "vendors": {"stt": "Deepgram", "llm": "GPT-4.1", "tts": "ElevenLabs"},
                         },
                     ],
-                    "flow_edges": [["router", "qualify"], ["router", "escalate"]],
-                    "tools_catalog": [
+                    "flow_edges": [
                         {
-                            "id": "crm_lookup",
-                            "name": "CRM lookup",
-                            "description": "Check existing lead ownership and recent activity.",
-                            "enabled": True,
+                            "id": "edge_router_qualify",
+                            "source_id": "router",
+                            "target_id": "qualify",
+                            "label": "Needs qualification",
+                            "condition": "Move here when the caller intent is clear enough to score fit and urgency.",
                         },
                         {
-                            "id": "calendar_booking",
-                            "name": "Calendar booking",
-                            "description": "Reserve a follow-up slot when the lead is qualified.",
-                            "enabled": True,
-                        },
-                    ],
-                    "knowledge_sources": [
-                        {
-                            "id": "playbook",
-                            "name": "Call playbook",
-                            "description": "Objection handling, qualification rules, and messaging.",
-                            "status": "Connected",
-                            "enabled": True,
-                        },
-                        {
-                            "id": "policy",
-                            "name": "Policy notes",
-                            "description": "Sensitive situations that require human escalation.",
-                            "status": "Connected",
-                            "enabled": True,
+                            "id": "edge_router_escalate",
+                            "source_id": "router",
+                            "target_id": "escalate",
+                            "label": "Needs human assist",
+                            "condition": "Move here when the caller enters a sensitive or exception path.",
                         },
                     ],
+                    "tools_catalog": [],
+                    "knowledge_sources": [],
                 },
                 "vendor_config": {
                     "stack": {"stt": "Deepgram", "llm": "GPT-4.1", "tts": "ElevenLabs"}
@@ -217,6 +205,7 @@ def build_demo_agents(tenant_id, workspace_id) -> list[dict[str, object]]:
                 "pipeline_mode": "stt_llm_tts",
                 "routing_config": {
                     "description": "Handles callbacks, reminders, and post-call conversion nudges.",
+                    "shared_prompt": "Stay helpful and low-pressure. Confirm what changed and move the caller toward the cleanest next committed step.",
                     "segment": "Conversion",
                     "goal": "Keep promising leads moving toward the next committed step.",
                     "flow_nodes": [
@@ -228,8 +217,8 @@ def build_demo_agents(tenant_id, workspace_id) -> list[dict[str, object]]:
                             "tone": "neutral",
                             "state": "Re-engagement",
                             "prompt": "Reconnect with interested leads and confirm the next step.",
-                            "tools": ["crm_lookup"],
-                            "knowledge": ["playbook"],
+                            "tools": [],
+                            "knowledge": [],
                             "vendors": {"stt": "AssemblyAI", "llm": "Claude Sonnet", "tts": "Cartesia"},
                         },
                         {
@@ -240,35 +229,22 @@ def build_demo_agents(tenant_id, workspace_id) -> list[dict[str, object]]:
                             "tone": "success",
                             "state": "Calendar conversion",
                             "prompt": "Offer and confirm a follow-up slot or meeting.",
-                            "tools": ["calendar_booking"],
-                            "knowledge": ["playbook"],
+                            "tools": [],
+                            "knowledge": [],
                             "vendors": {"stt": "AssemblyAI", "llm": "Claude Sonnet", "tts": "Cartesia"},
                         },
                     ],
-                    "flow_edges": [["callback", "book"]],
-                    "tools_catalog": [
+                    "flow_edges": [
                         {
-                            "id": "crm_lookup",
-                            "name": "CRM lookup",
-                            "description": "Load owner, status, and recent activity before the callback.",
-                            "enabled": True,
-                        },
-                        {
-                            "id": "calendar_booking",
-                            "name": "Calendar booking",
-                            "description": "Finalize a follow-up slot during the call.",
-                            "enabled": True,
-                        },
-                    ],
-                    "knowledge_sources": [
-                        {
-                            "id": "playbook",
-                            "name": "Call playbook",
-                            "description": "Follow-up scripts and qualification reminders.",
-                            "status": "Connected",
-                            "enabled": True,
+                            "id": "edge_callback_book",
+                            "source_id": "callback",
+                            "target_id": "book",
+                            "label": "Ready to book",
+                            "condition": "Move here when the caller confirms interest and agrees to schedule the next step.",
                         }
                     ],
+                    "tools_catalog": [],
+                    "knowledge_sources": [],
                 },
                 "vendor_config": {
                     "stack": {"stt": "AssemblyAI", "llm": "Claude Sonnet", "tts": "Cartesia"}

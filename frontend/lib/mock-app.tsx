@@ -12,11 +12,13 @@ import { useRouter } from "next/navigation";
 import {
   createActiveCall,
   createAgent,
+  type AgentCreationMode,
   dateRanges,
   demoScenarios,
   getTimeLabel,
   type ActiveCall,
   type Agent,
+  type FlowEdge,
   type CallRecord,
   type Connection,
   type DemoScenario,
@@ -24,8 +26,8 @@ import {
 } from "@/lib/mock-data";
 import { ApiError, api } from "@/lib/api-client";
 import {
-  buildDefaultRuntimeProfile,
   getProviderLabel,
+  mergeRuntimeProfile,
   parsePhoneNumbers,
   resolveProviderHealthCheckEndpoint,
   type AgentRuntimeProfile,
@@ -47,6 +49,11 @@ type MockAppContextValue = {
   tenantSlug: string;
   workspaceId: string;
   workspaceName: string;
+  workspaceOptions: Array<{
+    workspace_id: string;
+    name: string;
+    is_default: boolean;
+  }>;
   agents: Agent[];
   selectedAgentId: string;
   selectedAgent: Agent | null;
@@ -63,7 +70,7 @@ type MockAppContextValue = {
   selectAgent: (agentId: string) => void;
   reloadWorkspaceContext: (preferredWorkspaceId?: string) => Promise<void>;
   signOut: () => Promise<void>;
-  createNewAgent: (name?: string) => Promise<Agent>;
+  createNewAgent: (name?: string, mode?: AgentCreationMode) => Promise<Agent>;
   deleteAgent: (agentId: string) => Promise<void>;
   updateAgent: (agentId: string, updater: (agent: Agent) => Agent) => Promise<void>;
   updateFlowNode: (
@@ -128,6 +135,7 @@ type AgentStudioResponse = {
   agent_key: string;
   name: string;
   description: string;
+  shared_prompt?: string;
   status: "Draft" | "Published" | "Archived";
   status_tone: "warning" | "success" | "neutral";
   last_edited: string;
@@ -135,7 +143,13 @@ type AgentStudioResponse = {
   goal: string;
   stack: Agent["stack"];
   flow_nodes: Agent["flowNodes"];
-  flow_edges: Agent["flowEdges"];
+  flow_edges: Array<{
+    id: string;
+    source_id: string;
+    target_id: string;
+    label: string;
+    condition: string;
+  }>;
   tools_catalog: Agent["toolsCatalog"];
   knowledge_sources: Agent["knowledgeSources"];
   latest_version_number: number | null;
@@ -180,6 +194,7 @@ type CallResponse = {
 type AppStateResponse = {
   workspace: WorkspaceRecord;
   agents: AgentStudioResponse[];
+  provider_accounts: ProviderAccountResponse[];
   calls: CallResponse[];
 };
 
@@ -289,23 +304,55 @@ function toConnectionFromProviderAccount(account: ProviderAccountRecord): Connec
   };
 }
 
+function toFlowEdge(edge: AgentStudioResponse["flow_edges"][number]): FlowEdge {
+  return {
+    id: edge.id,
+    sourceId: edge.source_id,
+    targetId: edge.target_id,
+    label: edge.label,
+    condition: edge.condition,
+  };
+}
+
+function fromFlowEdge(edge: FlowEdge) {
+  return {
+    id: edge.id,
+    source_id: edge.sourceId,
+    target_id: edge.targetId,
+    label: edge.label,
+    condition: edge.condition,
+  };
+}
+
 function toAgent(response: AgentStudioResponse): Agent {
   return {
     id: response.agent_id,
     name: response.name,
     description: response.description,
+    sharedPrompt: response.shared_prompt || "",
     status: response.status === "Published" ? "Published" : "Draft",
     statusTone: response.status_tone === "success" ? "success" : "warning",
     lastEdited: response.last_edited,
     segment: response.segment,
     goal: response.goal,
     stack: response.stack,
-    runtimeProfile: response.runtime_profile ?? buildDefaultRuntimeProfile(),
+    runtimeProfile: mergeRuntimeProfile(response.runtime_profile),
     flowNodes: response.flow_nodes,
-    flowEdges: response.flow_edges,
+    flowEdges: response.flow_edges.map(toFlowEdge),
     toolsCatalog: response.tools_catalog,
     knowledgeSources: response.knowledge_sources,
   };
+}
+
+function upsertAgent(currentAgents: Agent[], nextAgent: Agent) {
+  const existingIndex = currentAgents.findIndex((agent) => agent.id === nextAgent.id);
+  if (existingIndex === -1) {
+    return [...currentAgents, nextAgent].sort((left, right) => left.name.localeCompare(right.name));
+  }
+
+  const updatedAgents = [...currentAgents];
+  updatedAgents[existingIndex] = nextAgent;
+  return updatedAgents;
 }
 
 function toCallRecord(response: CallResponse): CallRecord {
@@ -339,6 +386,9 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
   const [tenantSlug, setTenantSlug] = useState("");
   const [workspaceId, setWorkspaceId] = useState("");
   const [workspaceName, setWorkspaceName] = useState("");
+  const [workspaceOptions, setWorkspaceOptions] = useState<MockAppContextValue["workspaceOptions"]>(
+    []
+  );
   const [agents, setAgents] = useState<Agent[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState("");
   const [connections, setConnections] = useState<Connection[]>([]);
@@ -378,6 +428,13 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
       isPlatformAdmin: session.user.is_platform_admin,
       role: activeMembership?.role ?? "admin",
     });
+    setWorkspaceOptions(
+      memberships.map((membership) => ({
+        workspace_id: membership.workspace_id,
+        name: membership.workspace_name,
+        is_default: membership.workspace_is_default,
+      }))
+    );
     setBootstrapError("");
 
     if (!activeMembership) {
@@ -410,14 +467,11 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
       setSelectedCallId("");
       return;
     }
-    const [state, accounts] = await Promise.all([
-      api<AppStateResponse>(
-        `/api/v1/tenants/${currentTenantSlug}/workspaces/${currentWorkspaceId}/app-state`
-      ),
-      api<ProviderAccountResponse[]>(`/api/v1/tenants/${currentTenantSlug}/provider-accounts`),
-    ]);
+    const state = await api<AppStateResponse>(
+      `/api/v1/tenants/${currentTenantSlug}/workspaces/${currentWorkspaceId}/app-state`
+    );
     const nextAgents = state.agents.map(toAgent);
-    const nextProviderAccounts = accounts.map(toProviderAccount);
+    const nextProviderAccounts = state.provider_accounts.map(toProviderAccount);
     const nextCalls = state.calls.map(toCallRecord);
 
     setAgents(nextAgents);
@@ -458,6 +512,7 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
       setTenantSlug("");
       setWorkspaceId("");
       setWorkspaceName("");
+      setWorkspaceOptions([]);
       setAgents([]);
       setConnections([]);
       setProviderAccounts([]);
@@ -602,7 +657,7 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
   }, [activeCall, agents, tenantSlug, workspaceId]);
 
   async function patchAgent(agentId: string, nextAgent: Agent) {
-    await api(
+    const updated = await api<AgentStudioResponse>(
       `/api/v1/tenants/${tenantSlug}/workspaces/${workspaceId}/agents/${agentId}/studio`,
       {
         method: "PATCH",
@@ -612,17 +667,20 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
           status: nextAgent.status.toLowerCase(),
           segment: nextAgent.segment,
           goal: nextAgent.goal,
+          shared_prompt: nextAgent.sharedPrompt,
           stack: nextAgent.stack,
           runtime_profile: nextAgent.runtimeProfile,
           flow_nodes: nextAgent.flowNodes,
-          flow_edges: nextAgent.flowEdges,
+          flow_edges: nextAgent.flowEdges.map(fromFlowEdge),
           tools_catalog: nextAgent.toolsCatalog,
           knowledge_sources: nextAgent.knowledgeSources,
           pipeline_mode: "stt_llm_tts",
         }),
       }
     );
-    await refreshState();
+    const nextAgentRecord = toAgent(updated);
+    setAgents((current) => upsertAgent(current, nextAgentRecord));
+    setSelectedAgentId(nextAgentRecord.id);
   }
 
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? agents[0] ?? null;
@@ -634,6 +692,7 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
       tenantSlug,
       workspaceId,
       workspaceName,
+      workspaceOptions,
       agents,
       selectedAgentId,
       selectedAgent,
@@ -654,8 +713,8 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
         setCurrentUser(null);
         router.replace("/login");
       },
-      createNewAgent: async (name = "New conversion flow") => {
-        const template = createAgent(name);
+      createNewAgent: async (name = "New conversion flow", mode = "template") => {
+        const template = createAgent(name, mode);
         const created = await api<AgentStudioResponse>(
           `/api/v1/tenants/${tenantSlug}/workspaces/${workspaceId}/agents`,
           {
@@ -668,7 +727,7 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
                 pipeline_mode: "stt_llm_tts",
                 routing_config: {
                   flow_nodes: template.flowNodes,
-                  flow_edges: template.flowEdges,
+                  flow_edges: template.flowEdges.map(fromFlowEdge),
                 },
                 vendor_config: {
                   stack: template.stack,
@@ -685,13 +744,14 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
             body: JSON.stringify({
               name: template.name,
               description: template.description,
+              shared_prompt: template.sharedPrompt,
               status: "draft",
               segment: template.segment,
               goal: template.goal,
               stack: template.stack,
               runtime_profile: template.runtimeProfile,
               flow_nodes: template.flowNodes,
-              flow_edges: template.flowEdges,
+              flow_edges: template.flowEdges.map(fromFlowEdge),
               tools_catalog: template.toolsCatalog,
               knowledge_sources: template.knowledgeSources,
               pipeline_mode: "stt_llm_tts",
@@ -787,7 +847,7 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
             title: "Agent published",
             message: "The workflow is published and ready for new call traffic.",
             tone: "success",
-            href: "/agents/builder",
+            href: `/agents/${agentId}`,
           },
           ...currentItems,
         ]);
@@ -924,6 +984,7 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
       tenantSlug,
       workspaceId,
       workspaceName,
+      workspaceOptions,
     ]
   );
 

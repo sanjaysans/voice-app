@@ -345,6 +345,23 @@ async def test_workspace_app_state_and_team_endpoints_work(
 
 
 @pytest.mark.asyncio
+async def test_workspace_agent_studio_update_returns_shared_prompt(
+    session, seeded_domain, auth_context
+) -> None:
+    app = build_test_app(session, auth_context)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.patch(
+            f"/api/v1/tenants/voice-demo/workspaces/{seeded_domain['workspace'].id}/agents/{seeded_domain['agent'].id}/studio",
+            json={"shared_prompt": "Stay concise and confirm intent."},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["shared_prompt"] == "Stay concise and confirm intent."
+
+
+@pytest.mark.asyncio
 async def test_call_review_endpoints_create_update_and_delete(
     session, seeded_domain, auth_context
 ) -> None:

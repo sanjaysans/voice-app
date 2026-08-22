@@ -2,10 +2,11 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { ArrowRight, Bot, Plus, Search, Sparkles, Trash2 } from "lucide-react";
+import { ArrowRight, Bot, Plus, Search, Trash2 } from "lucide-react";
 import { useMockApp } from "@/lib/mock-app";
+import type { AgentCreationMode } from "@/lib/mock-data";
 import { useAsyncAction, useKeyedAsyncAction } from "@/lib/use-async-action";
-import { Badge, Button, Card, ConfirmActionModal, EmptyState, Input, PageHeader } from "@/components/ui";
+import { Badge, Button, Card, ConfirmActionModal, EmptyState, Input, Modal, PageHeader, Select } from "@/components/ui";
 
 const filters = ["All", "Published", "Draft"];
 
@@ -18,6 +19,9 @@ export default function AgentsPage() {
   const deleteAction = useKeyedAsyncAction();
   const [pendingRoute, setPendingRoute] = useState<string | null>(null);
   const [agentToDelete, setAgentToDelete] = useState<{ id: string; name: string } | null>(null);
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [newAgentName, setNewAgentName] = useState("");
+  const [creationMode, setCreationMode] = useState<AgentCreationMode>("empty");
 
   const filteredAgents = agents.filter((agent) => {
     const matchesFilter = filter === "All" ? true : agent.status === filter;
@@ -26,9 +30,13 @@ export default function AgentsPage() {
   });
 
   const handleCreateAgent = async () => {
-    const agent = await createNewAgent(`New flow ${agents.length + 1}`);
+    const name = newAgentName.trim() || `New flow ${agents.length + 1}`;
+    const agent = await createNewAgent(name, creationMode);
     selectAgent(agent.id);
-    router.push("/agents/builder");
+    setIsCreateOpen(false);
+    setNewAgentName("");
+    setCreationMode("empty");
+    router.push(`/agents/${agent.id}`);
   };
 
   return (
@@ -38,19 +46,14 @@ export default function AgentsPage() {
         title="Agents"
         description="Reusable calling workflows that can route, qualify, serve, or hand off without locking the platform into one vertical."
         actions={
-          <>
-            <Button asChild href="/agents/builder" variant="secondary">
-              Open studio
-            </Button>
-            <Button
-              loading={createAction.isPending}
-              loadingText="Creating agent"
-              onClick={() => void createAction.run(handleCreateAgent)}
-            >
-              <Plus size={16} />
-              New agent
-            </Button>
-          </>
+          <Button
+            loading={createAction.isPending}
+            loadingText="Creating agent"
+            onClick={() => setIsCreateOpen(true)}
+          >
+            <Plus size={16} />
+            New agent
+          </Button>
         }
       />
 
@@ -120,35 +123,9 @@ export default function AgentsPage() {
                     </div>
                   </div>
 
-                  <div className="mt-5 rounded-2xl border border-border bg-white p-4">
-                    <div className="flex items-start gap-3">
-                      <div className="mt-0.5 flex h-9 w-9 items-center justify-center rounded-xl bg-[rgba(102,89,255,0.08)] text-accent">
-                        <Sparkles size={16} />
-                      </div>
-                      <div>
-                        <p className="font-medium">Why it matters</p>
-                        <p className="mt-2 text-sm leading-6 text-[#6D6D78]">
-                          This workflow keeps the product general-purpose while still supporting a clear qualification and conversion motion.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
                   <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
                     <p className="text-sm text-[#6D6D78]">Last edited {agent.lastEdited}</p>
                     <div className="flex flex-wrap gap-3">
-                      <Button
-                        loading={pendingRoute === `calls:${agent.id}`}
-                        loadingText="Opening calls"
-                        variant="secondary"
-                        onClick={() => {
-                          setPendingRoute(`calls:${agent.id}`);
-                          selectAgent(agent.id);
-                          router.push("/calls");
-                        }}
-                      >
-                        Launch call
-                      </Button>
                       <Button
                         variant="ghost"
                         disabled={agents.length === 1}
@@ -170,7 +147,7 @@ export default function AgentsPage() {
                         onClick={() => {
                           setPendingRoute(`builder:${agent.id}`);
                           selectAgent(agent.id);
-                          router.push("/agents/builder");
+                          router.push(`/agents/${agent.id}`);
                         }}
                         type="button"
                       >
@@ -212,6 +189,51 @@ export default function AgentsPage() {
           });
         }}
       />
+
+      <Modal
+        title="Create agent"
+        description="Start with a blank workflow or a starter routing template."
+        isOpen={isCreateOpen}
+        onClose={() => {
+          if (createAction.isPending) {
+            return;
+          }
+          setIsCreateOpen(false);
+          setNewAgentName("");
+          setCreationMode("empty");
+        }}
+      >
+        <div className="space-y-4">
+          <Input
+            label="Workflow name"
+            placeholder={`New flow ${agents.length + 1}`}
+            value={newAgentName}
+            onChange={(event) => setNewAgentName(event.target.value)}
+          />
+          <Select
+            label="Starting point"
+            value={creationMode}
+            options={[
+              { label: "Empty workflow", value: "empty" },
+              { label: "Starter template", value: "template" }
+            ]}
+            onChange={(event) => setCreationMode(event.target.value as AgentCreationMode)}
+          />
+          <div className="rounded-2xl border border-border bg-[#fafafe] p-4 text-sm leading-6 text-[#6D6D78]">
+            {creationMode === "empty"
+              ? "Creates a blank workflow with no routing nodes, tools, or knowledge bindings."
+              : "Creates a starter routing canvas only. Tools and knowledge stay empty until we design those flows."}
+          </div>
+          <Button
+            className="w-full justify-center"
+            loading={createAction.isPending}
+            loadingText="Creating agent"
+            onClick={() => void createAction.run(handleCreateAgent)}
+          >
+            Create agent
+          </Button>
+        </div>
+      </Modal>
     </div>
   );
 }

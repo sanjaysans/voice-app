@@ -405,6 +405,49 @@ export function Textarea({
   );
 }
 
+export function Slider({
+  label,
+  min = 0,
+  max = 100,
+  step = 1,
+  value = min,
+  onChange,
+}: {
+  label?: string;
+  min?: number;
+  max?: number;
+  step?: number;
+  value?: number;
+  onChange?: (event: { target: { value: string } }) => void;
+}) {
+  const precision = String(step).includes(".") ? String(step).split(".")[1]?.length ?? 0 : 0;
+  const formattedValue = precision ? value.toFixed(precision) : String(value);
+
+  return (
+    <label className="block">
+      {label ? <span className="mb-2 block text-sm font-medium text-[#17171F]">{label}</span> : null}
+      <div className="rounded-2xl border border-border bg-white px-4 py-4">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-xs font-medium text-[#8A8A97]">{min}</span>
+          <span className="rounded-full bg-[rgba(102,89,255,0.08)] px-2.5 py-1 text-xs font-semibold text-accent">
+            {formattedValue}
+          </span>
+          <span className="text-xs font-medium text-[#8A8A97]">{max}</span>
+        </div>
+        <input
+          className="mt-4 h-2 w-full cursor-pointer appearance-none rounded-full bg-[rgba(102,89,255,0.14)] accent-accent"
+          max={max}
+          min={min}
+          onChange={(event) => onChange?.({ target: { value: event.target.value } })}
+          step={step}
+          type="range"
+          value={value}
+        />
+      </div>
+    </label>
+  );
+}
+
 export function EmptyState({
   title,
   description,

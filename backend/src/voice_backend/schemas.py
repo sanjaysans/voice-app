@@ -214,6 +214,14 @@ class FlowNodeRecord(BaseModel):
     vendors: VendorStackRecord
 
 
+class FlowEdgeRecord(BaseModel):
+    id: str
+    source_id: str
+    target_id: str
+    label: str
+    condition: str
+
+
 class AgentToolRecord(BaseModel):
     id: str
     name: str
@@ -235,6 +243,7 @@ class AgentStudioRecord(BaseModel):
     agent_key: str
     name: str
     description: str
+    shared_prompt: str = ""
     status: Literal["Draft", "Published", "Archived"]
     status_tone: Literal["warning", "success", "neutral"]
     last_edited: str
@@ -243,7 +252,7 @@ class AgentStudioRecord(BaseModel):
     stack: VendorStackRecord
     runtime_profile: dict[str, object] = Field(default_factory=dict)
     flow_nodes: list[FlowNodeRecord]
-    flow_edges: list[tuple[str, str]]
+    flow_edges: list[FlowEdgeRecord]
     tools_catalog: list[AgentToolRecord]
     knowledge_sources: list[KnowledgeSourceRecord]
     latest_version_number: int | None
@@ -254,13 +263,14 @@ class AgentStudioUpdateInput(BaseModel):
     agent_key: str | None = None
     name: str | None = None
     description: str | None = None
+    shared_prompt: str | None = None
     status: AgentStatus | None = None
     segment: str | None = None
     goal: str | None = None
     stack: VendorStackRecord | None = None
     runtime_profile: dict[str, object] | None = None
     flow_nodes: list[FlowNodeRecord] | None = None
-    flow_edges: list[tuple[str, str]] | None = None
+    flow_edges: list[FlowEdgeRecord] | None = None
     tools_catalog: list[AgentToolRecord] | None = None
     knowledge_sources: list[KnowledgeSourceRecord] | None = None
     pipeline_mode: PipelineMode | None = None
@@ -330,6 +340,7 @@ class WorkspaceAppState(BaseModel):
     workspace: WorkspaceRecord
     agents: list[AgentStudioRecord]
     connections: list[ConnectionRecord]
+    provider_accounts: list[ProviderAccountRecord] = Field(default_factory=list)
     calls: list[CallReviewRecord]
 
 

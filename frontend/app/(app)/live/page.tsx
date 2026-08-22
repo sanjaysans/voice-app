@@ -204,7 +204,9 @@ export default function LivePage() {
       const session = await createBrowserRtcSession(tenantSlug, workspaceId, {
         dispatch_agent_name: selectedAgent.name.toLowerCase().replace(/\s+/g, "-"),
         prompt: {
-          system_prompt: selectedAgent.flowNodes[0]?.prompt ?? selectedAgent.description,
+          system_prompt: [selectedAgent.sharedPrompt, selectedAgent.flowNodes[0]?.prompt]
+            .filter(Boolean)
+            .join("\n\n"),
           opening_message: selectedAgent.runtimeProfile.prompt.openingMessage,
         },
         stt: {
@@ -220,7 +222,6 @@ export default function LivePage() {
           api_key: String(llmAccount.preview.api_key),
           model: String(selectedAgent.runtimeProfile.llm.model || "gpt-4.1-mini"),
           temperature: Number(selectedAgent.runtimeProfile.llm.temperature ?? 0.2),
-          max_output_tokens: Number(selectedAgent.runtimeProfile.llm.maxOutputTokens ?? 500),
         },
         tts: {
           api_key: String(ttsAccount.preview.api_key),
@@ -230,7 +231,7 @@ export default function LivePage() {
           speed: Number(selectedAgent.runtimeProfile.tts.speed ?? 1),
           emotion: String(selectedAgent.runtimeProfile.tts.emotion || "neutral"),
           volume: Number(selectedAgent.runtimeProfile.tts.volume ?? 1),
-          sample_rate: Number(selectedAgent.runtimeProfile.tts.sampleRate ?? 24000),
+          sample_rate: Number(selectedAgent.runtimeProfile.workflow.sampleRate ?? 24000),
         },
         metadata: {
           workspace: workspaceId,

@@ -9,7 +9,8 @@ import { Badge, Button, Card, EmptyState, PageHeader, StatCard } from "@/compone
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { agents, callHistory, connections, dateRange, setDateRange, selectCall } = useMockApp();
+  const { agents, selectedAgentId, callHistory, connections, dateRange, setDateRange, selectCall } = useMockApp();
+  const activeAgentHref = selectedAgentId || agents[0]?.id ? `/agents/${selectedAgentId || agents[0]?.id}` : "/agents";
 
   const publishedAgents = agents.filter((agent) => agent.status === "Published").length;
   const connectedSystems = connections.filter((connection) => connection.status === "Connected").length;
@@ -55,8 +56,8 @@ export default function DashboardPage() {
     {
       title: "Publish the primary workflow",
       detail: `${publishedAgents} of ${agents.length} agents are published and available for launch.`,
-      href: "/agents/builder",
-      cta: "Open studio",
+      href: activeAgentHref,
+      cta: "Open agent",
       done: publishedAgents > 0
     },
     {
@@ -97,7 +98,7 @@ export default function DashboardPage() {
                 </button>
               ))}
             </div>
-            <Button asChild href="/agents/builder" variant="secondary">
+            <Button asChild href={activeAgentHref} variant="secondary">
               Refine agent
             </Button>
             <Button asChild href="/calls">New call</Button>

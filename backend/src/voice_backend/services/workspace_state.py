@@ -13,9 +13,12 @@ from voice_backend.schemas import (
     AgentStudioRecord,
     CallReviewRecord,
     ConnectionRecord,
+    ProviderAccountRecord,
+    SessionMembershipRecord,
     WorkspaceAppState,
     WorkspaceRecord,
 )
+from voice_backend.services.provider_account_admin import to_provider_account_record
 
 
 def _title_case_status(status: str) -> str:
@@ -42,6 +45,32 @@ def _relative_label(timestamp) -> str:
     return f"{days} days ago"
 
 
+def _normalize_flow_edges(raw_edges) -> list[dict[str, str]]:
+    normalized: list[dict[str, str]] = []
+    for index, edge in enumerate(raw_edges or []):
+        if isinstance(edge, dict):
+            normalized.append(
+                {
+                    "id": str(edge.get("id", f"edge_{index}")),
+                    "source_id": str(edge.get("source_id", "")),
+                    "target_id": str(edge.get("target_id", "")),
+                    "label": str(edge.get("label", "")),
+                    "condition": str(edge.get("condition", "")),
+                }
+            )
+        elif isinstance(edge, (list, tuple)) and len(edge) >= 2:
+            normalized.append(
+                {
+                    "id": f"edge_{index}",
+                    "source_id": str(edge[0]),
+                    "target_id": str(edge[1]),
+                    "label": "",
+                    "condition": "",
+                }
+            )
+    return normalized
+
+
 def _build_agent_record(agent) -> AgentStudioRecord:
     latest_version = agent.versions[-1] if agent.versions else None
     routing_config = latest_version.routing_config if latest_version is not None else {}
@@ -52,6 +81,7 @@ def _build_agent_record(agent) -> AgentStudioRecord:
         agent_key=agent.agent_key,
         name=agent.name,
         description=str(routing_config.get("description", "")),
+        shared_prompt=str(routing_config.get("shared_prompt", "")),
         status=_title_case_status(agent.status),
         status_tone=_status_tone(agent.status),
         last_edited=_relative_label(agent.updated_at),
@@ -63,7 +93,7 @@ def _build_agent_record(agent) -> AgentStudioRecord:
         ),
         runtime_profile=vendor_config.get("runtime_profile", {}),
         flow_nodes=routing_config.get("flow_nodes", []),
-        flow_edges=routing_config.get("flow_edges", []),
+        flow_edges=_normalize_flow_edges(routing_config.get("flow_edges", [])),
         tools_catalog=routing_config.get("tools_catalog", []),
         knowledge_sources=routing_config.get("knowledge_sources", []),
         latest_version_number=latest_version.version_number if latest_version is not None else None,
@@ -144,32 +174,60 @@ class WorkspaceStateService:
         self.calls = CallRepository(session)
         self.accounts = ProviderAccountRepository(session)
 
-    def get_state(self, tenant_slug: str, workspace_id) -> WorkspaceAppState | None:
-        tenant = self.tenants.get_by_slug(tenant_slug)
-        if tenant is None:
-            return None
-        workspace = self.workspaces.get_for_tenant(tenant.id, workspace_id)
-        if workspace is None:
-            return None
-        return WorkspaceAppState(
-            workspace=WorkspaceRecord(
+    def get_state(
+        self,
+        tenant_slug: str,
+        workspace_id,
+        *,
+        tenant_id=None,
+        workspace_membership: SessionMembershipRecord | None = None,
+    ) -> WorkspaceAppState | None:
+        resolved_tenant_id = tenant_id
+        if resolved_tenant_id is None:
+            tenant = self.tenants.get_by_slug(tenant_slug)
+            if tenant is None:
+                return None
+            resolved_tenant_id = tenant.id
+
+        if workspace_membership is not None:
+            workspace_record = WorkspaceRecord(
+                workspace_id=workspace_membership.workspace_id,
+                tenant_id=workspace_membership.tenant_id,
+                name=workspace_membership.workspace_name,
+                is_default=workspace_membership.workspace_is_default,
+                created_at=datetime.now(UTC),
+            )
+        else:
+            workspace = self.workspaces.get_for_tenant(resolved_tenant_id, workspace_id)
+            if workspace is None:
+                return None
+            workspace_record = WorkspaceRecord(
                 workspace_id=workspace.id,
                 tenant_id=workspace.tenant_id,
                 name=workspace.name,
                 is_default=workspace.is_default,
                 created_at=workspace.created_at,
-            ),
+            )
+
+        provider_accounts = self.accounts.list_by_tenant(resolved_tenant_id)
+        provider_account_records: list[ProviderAccountRecord] = [
+            to_provider_account_record(account) for account in provider_accounts
+        ]
+
+        return WorkspaceAppState(
+            workspace=workspace_record,
             agents=[
                 _build_agent_record(agent)
-                for agent in self.agents.list_by_workspace(tenant.id, workspace.id)
+                for agent in self.agents.list_by_workspace(resolved_tenant_id, workspace_id)
             ],
             connections=[
                 _build_connection_record(account)
-                for account in self.accounts.list_by_tenant(tenant.id)
+                for account in provider_accounts
                 if _connection_category(account.provider_kind) in {"Telephony", "CRM", "Calendar", "Knowledge"}
             ],
+            provider_accounts=provider_account_records,
             calls=[
                 _build_call_record(call)
-                for call in self.calls.list_recent_by_workspace(tenant.id, workspace.id, limit=100)
+                for call in self.calls.list_recent_by_workspace(resolved_tenant_id, workspace_id, limit=100)
             ],
         )

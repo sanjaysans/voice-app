@@ -51,6 +51,7 @@ from voice_backend.services import (
     WorkspaceAdminService,
     WorkspaceStateService,
 )
+from voice_backend.services.authentication import clear_session_cache
 
 router = APIRouter(prefix="/api/v1")
 SessionDependency = Annotated[Session, Depends(get_request_session)]
@@ -62,6 +63,7 @@ def _execute_write(session: Session, operation: Callable[[], MutationResult]) ->
     try:
         result = operation()
         session.commit()
+        clear_session_cache()
         return result
     except IntegrityError as exc:
         session.rollback()
@@ -69,6 +71,22 @@ def _execute_write(session: Session, operation: Callable[[], MutationResult]) ->
     except SQLAlchemyError as exc:
         session.rollback()
         raise HTTPException(status_code=500, detail="database operation failed") from exc
+
+
+def _tenant_id_from_auth(auth: AuthContext, tenant_slug: str):
+    membership = next((item for item in auth.memberships if item.tenant_slug == tenant_slug), None)
+    return membership.tenant_id if membership is not None else None
+
+
+def _workspace_membership_from_auth(auth: AuthContext, tenant_slug: str, workspace_id: UUID):
+    return next(
+        (
+            item
+            for item in auth.memberships
+            if item.tenant_slug == tenant_slug and item.workspace_id == workspace_id
+        ),
+        None,
+    )
 
 
 def _set_session_cookie(response: Response, request: Request, user_id: UUID) -> None:
@@ -188,7 +206,10 @@ def get_tenant_overview(tenant_slug: str, session: SessionDependency, auth: Auth
 @router.get("/tenants/{tenant_slug}/workspaces")
 def list_workspaces(tenant_slug: str, session: SessionDependency, auth: AuthDependency):
     require_tenant_access(auth, tenant_slug)
-    workspaces = WorkspaceAdminService(session).list_workspaces(tenant_slug)
+    workspaces = WorkspaceAdminService(session).list_workspaces(
+        tenant_slug,
+        tenant_id=_tenant_id_from_auth(auth, tenant_slug),
+    )
     if workspaces is None:
         raise HTTPException(status_code=404, detail="tenant not found")
     return [item.model_dump() for item in workspaces]
@@ -233,7 +254,12 @@ def get_workspace_app_state(
     auth: AuthDependency,
 ):
     require_workspace_access(auth, tenant_slug, workspace_id)
-    state = WorkspaceStateService(session).get_state(tenant_slug, workspace_id)
+    state = WorkspaceStateService(session).get_state(
+        tenant_slug,
+        workspace_id,
+        tenant_id=_tenant_id_from_auth(auth, tenant_slug),
+        workspace_membership=_workspace_membership_from_auth(auth, tenant_slug, workspace_id),
+    )
     if state is None:
         raise HTTPException(status_code=404, detail="workspace not found")
     return state.model_dump()
@@ -598,7 +624,10 @@ def delete_call_review(
 @router.get("/tenants/{tenant_slug}/provider-accounts")
 def list_provider_accounts(tenant_slug: str, session: SessionDependency, auth: AuthDependency):
     require_tenant_access(auth, tenant_slug)
-    accounts = ProviderAccountAdminService(session).list_accounts(tenant_slug)
+    accounts = ProviderAccountAdminService(session).list_accounts(
+        tenant_slug,
+        tenant_id=_tenant_id_from_auth(auth, tenant_slug),
+    )
     if accounts is None:
         raise HTTPException(status_code=404, detail="tenant not found")
     return [item.model_dump() for item in accounts]

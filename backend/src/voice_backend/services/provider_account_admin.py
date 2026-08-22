@@ -212,16 +212,28 @@ def _to_record(account) -> ProviderAccountRecord:
     )
 
 
+def to_provider_account_record(account) -> ProviderAccountRecord:
+    return _to_record(account)
+
+
 class ProviderAccountAdminService:
     def __init__(self, session: Session) -> None:
         self.tenants = TenantRepository(session)
         self.accounts = ProviderAccountRepository(session)
 
-    def list_accounts(self, tenant_slug: str) -> list[ProviderAccountRecord] | None:
-        tenant = self.tenants.get_by_slug(tenant_slug)
-        if tenant is None:
-            return None
-        return [_to_record(account) for account in self.accounts.list_by_tenant(tenant.id)]
+    def list_accounts(
+        self,
+        tenant_slug: str,
+        *,
+        tenant_id=None,
+    ) -> list[ProviderAccountRecord] | None:
+        resolved_tenant_id = tenant_id
+        if resolved_tenant_id is None:
+            tenant = self.tenants.get_by_slug(tenant_slug)
+            if tenant is None:
+                return None
+            resolved_tenant_id = tenant.id
+        return [_to_record(account) for account in self.accounts.list_by_tenant(resolved_tenant_id)]
 
     def create_account(
         self,

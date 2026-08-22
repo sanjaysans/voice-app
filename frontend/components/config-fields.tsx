@@ -1,8 +1,19 @@
 "use client";
 
-import { Input, Select, Textarea } from "@/components/ui";
+import { Input, Select, Slider, Textarea } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import type { ConfigFieldDefinition } from "@/lib/voice-stack";
+
+function clampNumericValue(value: number, field: ConfigFieldDefinition) {
+  let nextValue = value;
+  if (typeof field.min === "number") {
+    nextValue = Math.max(field.min, nextValue);
+  }
+  if (typeof field.max === "number") {
+    nextValue = Math.min(field.max, nextValue);
+  }
+  return nextValue;
+}
 
 export function ConfigFields({
   fields,
@@ -38,13 +49,57 @@ export function ConfigFields({
         }
 
         if (field.type === "select") {
+          const normalizedSelectValue =
+            typeof currentValue === "number" ? String(currentValue) : typeof currentValue === "string" ? currentValue : "";
           return (
             <div key={field.id} className="space-y-2">
+              {field.allowDirectInput ? (
+                <Input
+                  label={field.directInputLabel ?? `${field.label} value`}
+                  placeholder={field.directInputPlaceholder ?? `Enter ${field.label.toLowerCase()} directly`}
+                  value={normalizedSelectValue}
+                  onChange={(event) => onChange(field.id, event.target.value)}
+                />
+              ) : null}
               <Select
-                label={field.label}
+                label={field.allowDirectInput ? `Choose from supported ${field.label.toLowerCase()}s` : field.label}
                 options={field.options ?? []}
-                value={typeof currentValue === "string" ? currentValue : ""}
-                onChange={(event) => onChange(field.id, event.target.value)}
+                value={normalizedSelectValue}
+                onChange={(event) => {
+                  const rawValue = event.target.value;
+                  const numericOption = (field.options ?? []).every((option) => {
+                    const optionValue = typeof option === "string" ? option : option.value;
+                    return !Number.isNaN(Number(optionValue));
+                  });
+                  onChange(field.id, numericOption ? Number(rawValue) : rawValue);
+                }}
+              />
+              {field.description ? (
+                <p className="text-xs leading-5 text-[#6D6D78]">{field.description}</p>
+              ) : null}
+            </div>
+          );
+        }
+
+        if (field.type === "slider") {
+          const sliderValue =
+            typeof currentValue === "number"
+              ? clampNumericValue(currentValue, field)
+              : typeof field.min === "number"
+                ? field.min
+                : 0;
+
+          return (
+            <div key={field.id} className="space-y-2">
+              <Slider
+                label={field.label}
+                max={field.max}
+                min={field.min}
+                onChange={(event) =>
+                  onChange(field.id, clampNumericValue(Number(event.target.value || 0), field))
+                }
+                step={field.step}
+                value={sliderValue}
               />
               {field.description ? (
                 <p className="text-xs leading-5 text-[#6D6D78]">{field.description}</p>
@@ -93,13 +148,18 @@ export function ConfigFields({
           <div key={field.id} className="space-y-2">
             <Input
               label={field.label}
+              max={field.type === "number" ? field.max : undefined}
+              min={field.type === "number" ? field.min : undefined}
               placeholder={field.placeholder}
+              step={field.type === "number" ? field.step : undefined}
               type={field.type === "password" ? "password" : field.type === "number" ? "number" : "text"}
               value={typeof currentValue === "number" ? String(currentValue) : typeof currentValue === "string" ? currentValue : ""}
               onChange={(event) =>
                 onChange(
                   field.id,
-                  field.type === "number" ? Number(event.target.value || 0) : event.target.value
+                  field.type === "number"
+                    ? clampNumericValue(Number(event.target.value || field.min || 0), field)
+                    : event.target.value
                 )
               }
             />

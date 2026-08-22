@@ -268,8 +268,39 @@ def test_agent_definition_admin_service_persists_runtime_profile(session, seeded
     )
 
     assert updated is not None
-    assert updated.latest_version is not None
-    assert updated.latest_version.vendor_config["runtime_profile"]["stt"]["providerAccountId"] == "stt-1"
+    assert updated.latest_version_number == 1
+    assert updated.runtime_profile["stt"]["providerAccountId"] == "stt-1"
+
+
+def test_agent_definition_admin_service_returns_shared_prompt_in_studio_record(
+    session, seeded_domain
+) -> None:
+    service = AgentDefinitionAdminService(session)
+
+    created = service.create_agent(
+        "voice-demo",
+        seeded_domain["workspace"].id,
+        AgentDefinitionCreateInput(
+            agent_key="prompt-router",
+            name="Prompt Router",
+            status="draft",
+            initial_version=AgentVersionCreateInput(
+                pipeline_mode="stt_llm_tts",
+                routing_config={},
+                vendor_config={},
+            ),
+        ),
+    )
+
+    updated = service.update_studio(
+        "voice-demo",
+        seeded_domain["workspace"].id,
+        created.agent_id,
+        AgentStudioUpdateInput(shared_prompt="Stay concise and confirm intent."),
+    )
+
+    assert updated is not None
+    assert updated.shared_prompt == "Stay concise and confirm intent."
 
 
 def test_agent_catalog_service_returns_none_for_workspace_outside_tenant(

@@ -22,11 +22,14 @@ class WorkspaceAdminService:
         self.tenants = TenantRepository(session)
         self.workspaces = WorkspaceRepository(session)
 
-    def list_workspaces(self, tenant_slug: str) -> list[WorkspaceRecord] | None:
-        tenant = self.tenants.get_by_slug(tenant_slug)
-        if tenant is None:
-            return None
-        return [_to_record(workspace) for workspace in self.workspaces.list_by_tenant(tenant.id)]
+    def list_workspaces(self, tenant_slug: str, *, tenant_id=None) -> list[WorkspaceRecord] | None:
+        resolved_tenant_id = tenant_id
+        if resolved_tenant_id is None:
+            tenant = self.tenants.get_by_slug(tenant_slug)
+            if tenant is None:
+                return None
+            resolved_tenant_id = tenant.id
+        return [_to_record(workspace) for workspace in self.workspaces.list_by_tenant(resolved_tenant_id)]
 
     def create_workspace(
         self, tenant_slug: str, payload: WorkspaceCreateInput
