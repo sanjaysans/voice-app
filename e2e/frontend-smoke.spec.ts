@@ -8,8 +8,10 @@ test("stakeholder flow stays navigable across build, operate, and admin", async 
   const workspaceName = `Investor sandbox ${suffix}`;
   const webhookName = `CRM event sink ${suffix}`;
 
-  await page.goto("/dashboard");
-  await expect(page.getByText("Loading workspace...")).not.toBeVisible({ timeout: 20_000 });
+  await page.goto("/login");
+  await page.getByLabel("Work email").fill("investor-demo@voice.local");
+  await page.getByLabel("Password").fill("VoiceDemo123!");
+  await page.getByRole("button", { name: /Continue to workspace/ }).click();
   await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible({
     timeout: 20_000,
   });
@@ -58,7 +60,7 @@ test("stakeholder flow stays navigable across build, operate, and admin", async 
   await expect(page.getByRole("heading", { name: "Create workspace" })).not.toBeVisible();
 
   await page.getByRole("link", { name: "Webhooks" }).click();
-  await expect(page.getByRole("heading", { name: "Webhooks" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Webhooks", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Add webhook" }).click();
   await page.getByLabel("Label").fill(webhookName);
   await page.getByLabel("URL").fill("https://example.com/hooks/voice");

@@ -43,6 +43,19 @@ class MembershipRepository:
         )
         return self.session.scalar(statement)
 
+    def list_by_user(self, user_id) -> list[TenantMembership]:
+        statement = (
+            select(TenantMembership)
+            .where(TenantMembership.user_id == user_id)
+            .options(
+                joinedload(TenantMembership.user),
+                joinedload(TenantMembership.workspace),
+                joinedload(TenantMembership.tenant),
+            )
+            .order_by(TenantMembership.created_at)
+        )
+        return list(self.session.scalars(statement))
+
     def update(self, membership: TenantMembership, *, role: str | None = None) -> TenantMembership:
         if role is not None:
             membership.role = role

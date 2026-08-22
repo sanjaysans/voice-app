@@ -1,14 +1,24 @@
+from dataclasses import replace
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from voice_backend.auth import get_current_auth
 from voice_backend.app import create_app
 from voice_backend.database import get_request_session
+from voice_backend.schemas import SessionMembershipRecord
+
+
+def build_test_app(session, auth_context):
+    app = create_app()
+    app.dependency_overrides[get_request_session] = lambda: session
+    app.dependency_overrides[get_current_auth] = lambda: auth_context
+    return app
 
 
 @pytest.mark.asyncio
-async def test_tenant_overview_endpoint_returns_404_for_unknown_tenant(session) -> None:
-    app = create_app()
-    app.dependency_overrides[get_request_session] = lambda: session
+async def test_tenant_overview_endpoint_returns_404_for_unknown_tenant(session, auth_context) -> None:
+    app = build_test_app(session, auth_context)
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://testserver"
     ) as client:
@@ -19,9 +29,8 @@ async def test_tenant_overview_endpoint_returns_404_for_unknown_tenant(session) 
 
 
 @pytest.mark.asyncio
-async def test_tenant_overview_endpoint_returns_counts(session, seeded_domain) -> None:
-    app = create_app()
-    app.dependency_overrides[get_request_session] = lambda: session
+async def test_tenant_overview_endpoint_returns_counts(session, seeded_domain, auth_context) -> None:
+    app = build_test_app(session, auth_context)
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://testserver"
     ) as client:
@@ -33,9 +42,8 @@ async def test_tenant_overview_endpoint_returns_counts(session, seeded_domain) -
 
 
 @pytest.mark.asyncio
-async def test_tenant_crud_endpoints_work(session) -> None:
-    app = create_app()
-    app.dependency_overrides[get_request_session] = lambda: session
+async def test_tenant_crud_endpoints_work(session, auth_context) -> None:
+    app = build_test_app(session, auth_context)
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://testserver"
     ) as client:
@@ -58,10 +66,9 @@ async def test_tenant_crud_endpoints_work(session) -> None:
 
 @pytest.mark.asyncio
 async def test_workspace_agents_endpoint_returns_latest_version_data(
-    session, seeded_domain
+    session, seeded_domain, auth_context
 ) -> None:
-    app = create_app()
-    app.dependency_overrides[get_request_session] = lambda: session
+    app = build_test_app(session, auth_context)
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://testserver"
     ) as client:
@@ -74,9 +81,8 @@ async def test_workspace_agents_endpoint_returns_latest_version_data(
 
 
 @pytest.mark.asyncio
-async def test_workspace_crud_endpoints_work(session, seeded_domain) -> None:
-    app = create_app()
-    app.dependency_overrides[get_request_session] = lambda: session
+async def test_workspace_crud_endpoints_work(session, seeded_domain, auth_context) -> None:
+    app = build_test_app(session, auth_context)
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://testserver"
     ) as client:
@@ -103,9 +109,10 @@ async def test_workspace_crud_endpoints_work(session, seeded_domain) -> None:
 
 
 @pytest.mark.asyncio
-async def test_deleting_default_workspace_promotes_another_workspace(session, seeded_domain) -> None:
-    app = create_app()
-    app.dependency_overrides[get_request_session] = lambda: session
+async def test_deleting_default_workspace_promotes_another_workspace(
+    session, seeded_domain, auth_context
+) -> None:
+    app = build_test_app(session, auth_context)
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://testserver"
     ) as client:
@@ -121,9 +128,10 @@ async def test_deleting_default_workspace_promotes_another_workspace(session, se
 
 
 @pytest.mark.asyncio
-async def test_workspace_default_selection_remains_unique(session, seeded_domain) -> None:
-    app = create_app()
-    app.dependency_overrides[get_request_session] = lambda: session
+async def test_workspace_default_selection_remains_unique(
+    session, seeded_domain, auth_context
+) -> None:
+    app = build_test_app(session, auth_context)
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://testserver"
     ) as client:
@@ -139,9 +147,8 @@ async def test_workspace_default_selection_remains_unique(session, seeded_domain
 
 
 @pytest.mark.asyncio
-async def test_recent_calls_endpoint_applies_limit(session, seeded_domain) -> None:
-    app = create_app()
-    app.dependency_overrides[get_request_session] = lambda: session
+async def test_recent_calls_endpoint_applies_limit(session, seeded_domain, auth_context) -> None:
+    app = build_test_app(session, auth_context)
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://testserver"
     ) as client:
@@ -155,9 +162,10 @@ async def test_recent_calls_endpoint_applies_limit(session, seeded_domain) -> No
 
 
 @pytest.mark.asyncio
-async def test_agent_definition_endpoints_create_update_and_version(session, seeded_domain) -> None:
-    app = create_app()
-    app.dependency_overrides[get_request_session] = lambda: session
+async def test_agent_definition_endpoints_create_update_and_version(
+    session, seeded_domain, auth_context
+) -> None:
+    app = build_test_app(session, auth_context)
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://testserver"
     ) as client:
@@ -204,9 +212,8 @@ async def test_agent_definition_endpoints_create_update_and_version(session, see
 
 
 @pytest.mark.asyncio
-async def test_provider_account_crud_endpoints_work(session, seeded_domain) -> None:
-    app = create_app()
-    app.dependency_overrides[get_request_session] = lambda: session
+async def test_provider_account_crud_endpoints_work(session, seeded_domain, auth_context) -> None:
+    app = build_test_app(session, auth_context)
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://testserver"
     ) as client:
@@ -243,9 +250,10 @@ async def test_provider_account_crud_endpoints_work(session, seeded_domain) -> N
 
 
 @pytest.mark.asyncio
-async def test_workspace_app_state_and_team_endpoints_work(session, seeded_domain) -> None:
-    app = create_app()
-    app.dependency_overrides[get_request_session] = lambda: session
+async def test_workspace_app_state_and_team_endpoints_work(
+    session, seeded_domain, auth_context
+) -> None:
+    app = build_test_app(session, auth_context)
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://testserver"
     ) as client:
@@ -279,14 +287,18 @@ async def test_workspace_app_state_and_team_endpoints_work(session, seeded_domai
         assert update_member_response.status_code == 200
         assert update_member_response.json()["display_name"] == "Ops Manager"
         assert list_members_response.status_code == 200
-        assert len(list_members_response.json()) == 1
+        assert len(list_members_response.json()) == 2
+        assert any(
+            item["display_name"] == "Ops Manager" for item in list_members_response.json()
+        )
         assert delete_member_response.status_code == 204
 
 
 @pytest.mark.asyncio
-async def test_call_review_endpoints_create_update_and_delete(session, seeded_domain) -> None:
-    app = create_app()
-    app.dependency_overrides[get_request_session] = lambda: session
+async def test_call_review_endpoints_create_update_and_delete(
+    session, seeded_domain, auth_context
+) -> None:
+    app = build_test_app(session, auth_context)
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://testserver"
     ) as client:
@@ -325,10 +337,9 @@ async def test_call_review_endpoints_create_update_and_delete(session, seeded_do
 
 @pytest.mark.asyncio
 async def test_workspace_agents_endpoint_returns_404_for_wrong_tenant(
-    session, seeded_domain
+    session, seeded_domain, auth_context
 ) -> None:
-    app = create_app()
-    app.dependency_overrides[get_request_session] = lambda: session
+    app = build_test_app(session, auth_context)
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://testserver"
     ) as client:
@@ -341,10 +352,9 @@ async def test_workspace_agents_endpoint_returns_404_for_wrong_tenant(
 
 @pytest.mark.asyncio
 async def test_provider_account_endpoints_return_404_for_wrong_tenant(
-    session, seeded_domain
+    session, seeded_domain, auth_context
 ) -> None:
-    app = create_app()
-    app.dependency_overrides[get_request_session] = lambda: session
+    app = build_test_app(session, auth_context)
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://testserver"
     ) as client:
@@ -356,9 +366,10 @@ async def test_provider_account_endpoints_return_404_for_wrong_tenant(
 
 
 @pytest.mark.asyncio
-async def test_recent_calls_endpoint_returns_404_for_wrong_tenant(session, seeded_domain) -> None:
-    app = create_app()
-    app.dependency_overrides[get_request_session] = lambda: session
+async def test_recent_calls_endpoint_returns_404_for_wrong_tenant(
+    session, seeded_domain, auth_context
+) -> None:
+    app = build_test_app(session, auth_context)
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://testserver"
     ) as client:
@@ -370,9 +381,10 @@ async def test_recent_calls_endpoint_returns_404_for_wrong_tenant(session, seede
 
 
 @pytest.mark.asyncio
-async def test_recent_calls_endpoint_rejects_invalid_limit(session, seeded_domain) -> None:
-    app = create_app()
-    app.dependency_overrides[get_request_session] = lambda: session
+async def test_recent_calls_endpoint_rejects_invalid_limit(
+    session, seeded_domain, auth_context
+) -> None:
+    app = build_test_app(session, auth_context)
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://testserver"
     ) as client:
@@ -384,9 +396,8 @@ async def test_recent_calls_endpoint_rejects_invalid_limit(session, seeded_domai
 
 
 @pytest.mark.asyncio
-async def test_duplicate_tenant_slug_returns_conflict(session) -> None:
-    app = create_app()
-    app.dependency_overrides[get_request_session] = lambda: session
+async def test_duplicate_tenant_slug_returns_conflict(session, auth_context) -> None:
+    app = build_test_app(session, auth_context)
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://testserver"
     ) as client:
@@ -397,9 +408,10 @@ async def test_duplicate_tenant_slug_returns_conflict(session) -> None:
 
 
 @pytest.mark.asyncio
-async def test_duplicate_provider_account_label_returns_conflict(session, seeded_domain) -> None:
-    app = create_app()
-    app.dependency_overrides[get_request_session] = lambda: session
+async def test_duplicate_provider_account_label_returns_conflict(
+    session, seeded_domain, auth_context
+) -> None:
+    app = build_test_app(session, auth_context)
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://testserver"
     ) as client:
@@ -415,3 +427,81 @@ async def test_duplicate_provider_account_label_returns_conflict(session, seeded
         )
 
         assert response.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_viewer_cannot_perform_workspace_admin_actions(
+    session, seeded_domain, auth_context
+) -> None:
+    viewer_auth = replace(
+        auth_context,
+        is_platform_admin=False,
+        memberships=(
+            SessionMembershipRecord(
+                **(auth_context.active_membership.model_dump() | {"role": "viewer"}),
+            ),
+        ),
+        active_membership=SessionMembershipRecord(
+            **(auth_context.active_membership.model_dump() | {"role": "viewer"}),
+        ),
+    )
+    app = build_test_app(session, viewer_auth)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        workspace_response = await client.post(
+            "/api/v1/tenants/voice-demo/workspaces",
+            json={"name": "Blocked", "is_default": False},
+        )
+        member_response = await client.post(
+            f"/api/v1/tenants/voice-demo/workspaces/{seeded_domain['workspace'].id}/members",
+            json={
+                "email": "viewer-blocked@example.com",
+                "display_name": "Viewer Blocked",
+                "role": "viewer",
+            },
+        )
+
+        assert workspace_response.status_code == 403
+        assert member_response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_editor_can_write_agents_but_not_manage_team(
+    session, seeded_domain, auth_context
+) -> None:
+    editor_auth = replace(
+        auth_context,
+        is_platform_admin=False,
+        memberships=(
+            SessionMembershipRecord(
+                **(auth_context.active_membership.model_dump() | {"role": "editor"}),
+            ),
+        ),
+        active_membership=SessionMembershipRecord(
+            **(auth_context.active_membership.model_dump() | {"role": "editor"}),
+        ),
+    )
+    app = build_test_app(session, editor_auth)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        agent_response = await client.post(
+            f"/api/v1/tenants/voice-demo/workspaces/{seeded_domain['workspace'].id}/agents",
+            json={
+                "agent_key": "editor-router",
+                "name": "Editor Router",
+                "status": "draft",
+            },
+        )
+        member_response = await client.post(
+            f"/api/v1/tenants/voice-demo/workspaces/{seeded_domain['workspace'].id}/members",
+            json={
+                "email": "editor-blocked@example.com",
+                "display_name": "Editor Blocked",
+                "role": "viewer",
+            },
+        )
+
+        assert agent_response.status_code == 201
+        assert member_response.status_code == 403

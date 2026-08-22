@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { useMockApp } from "@/lib/mock-app";
+import { api } from "@/lib/api-client";
 import { Badge, Button, Card, Input, Modal, PageHeader, Select } from "@/components/ui";
 
 type TeamMember = {
@@ -11,20 +12,6 @@ type TeamMember = {
   display_name: string;
   role: "admin" | "editor" | "viewer";
 };
-
-const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8100";
-
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
-    cache: "no-store",
-  });
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
-  }
-  return response.status === 204 ? (undefined as T) : ((await response.json()) as T);
-}
 
 export default function TeamPage() {
   const { tenantSlug, workspaceId } = useMockApp();
@@ -36,7 +23,7 @@ export default function TeamPage() {
   const [role, setRole] = useState<"admin" | "editor" | "viewer">("viewer");
 
   async function loadMembers() {
-    const items = await request<TeamMember[]>(
+    const items = await api<TeamMember[]>(
       `/api/v1/tenants/${tenantSlug}/workspaces/${workspaceId}/members`
     );
     setMembers(items);
@@ -48,7 +35,7 @@ export default function TeamPage() {
 
   async function inviteMember() {
     setIsOpen(false);
-    await request(`/api/v1/tenants/${tenantSlug}/workspaces/${workspaceId}/members`, {
+    await api(`/api/v1/tenants/${tenantSlug}/workspaces/${workspaceId}/members`, {
       method: "POST",
       body: JSON.stringify({ email, display_name: displayName, role }),
     });
@@ -59,7 +46,7 @@ export default function TeamPage() {
   }
 
   async function updateRole(membershipId: string, nextRole: TeamMember["role"]) {
-    await request(
+    await api(
       `/api/v1/tenants/${tenantSlug}/workspaces/${workspaceId}/members/${membershipId}`,
       {
         method: "PATCH",
@@ -73,7 +60,7 @@ export default function TeamPage() {
     if (!editingMember) {
       return;
     }
-    await request(
+    await api(
       `/api/v1/tenants/${tenantSlug}/workspaces/${workspaceId}/members/${editingMember.membership_id}`,
       {
         method: "PATCH",
@@ -87,7 +74,7 @@ export default function TeamPage() {
   }
 
   async function removeMember(membershipId: string) {
-    await request(
+    await api(
       `/api/v1/tenants/${tenantSlug}/workspaces/${workspaceId}/members/${membershipId}`,
       {
         method: "DELETE",
@@ -101,7 +88,7 @@ export default function TeamPage() {
       <PageHeader
         eyebrow="Admin"
         title="Team"
-        description="Invite admins, editors, and viewers into the current workspace and keep roles visible before real auth arrives."
+        description="Invite admins, editors, and viewers into the current workspace and keep role ownership visible."
         actions={
           <Button onClick={() => setIsOpen(true)}>
             <Plus size={16} />

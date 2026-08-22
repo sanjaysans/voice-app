@@ -49,6 +49,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.state.settings = resolved_settings
     configure_database(app, resolved_settings)
     app.include_router(api_router)
 

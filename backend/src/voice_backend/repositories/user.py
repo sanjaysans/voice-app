@@ -8,21 +8,40 @@ class UserRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
 
-    def create(self, email: str, display_name: str, *, is_platform_admin: bool = False) -> User:
+    def create(
+        self,
+        email: str,
+        display_name: str,
+        *,
+        password_hash: str = "",
+        is_platform_admin: bool = False,
+    ) -> User:
         user = User(
             email=email,
             display_name=display_name,
+            password_hash=password_hash,
             is_platform_admin=is_platform_admin,
         )
         self.session.add(user)
         self.session.flush()
         return user
 
+    def get_by_id(self, user_id) -> User | None:
+        return self.session.get(User, user_id)
+
     def get_by_email(self, email: str) -> User | None:
         return self.session.scalar(select(User).where(User.email == email))
 
-    def update(self, user: User, *, display_name: str | None = None) -> User:
+    def update(
+        self,
+        user: User,
+        *,
+        display_name: str | None = None,
+        password_hash: str | None = None,
+    ) -> User:
         if display_name is not None:
             user.display_name = display_name
+        if password_hash is not None:
+            user.password_hash = password_hash
         self.session.flush()
         return user

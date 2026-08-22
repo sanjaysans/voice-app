@@ -2,18 +2,18 @@
 
 Multi-tenant, multi-vendor telephony voice agent SaaS platform.
 
-This repo is intentionally lean for the current phase.
+This repo is still intentionally staged, but the primary frontend and backend now run as a real local product shell with authenticated access and seed-driven bootstrap.
 The focus right now is:
 
 - building and iterating the clickable product mock in `mock_design`
-- keeping `frontend` open for the future production implementation
+- wiring the production-track app in `frontend` and `backend`
 - codifying team workflow in `docs` and `skills`
 - keeping delivery disciplined through PRD, Linear, planning, review, implementation, and validation loops
 
 ## Workspace Layout
 
 - `mock_design` — runnable Next.js mock product, design tokens, and iterative UX exploration
-- `frontend` — reserved for the eventual production frontend implementation
+- `frontend` — production-track Next.js application shell
 - `backend` — FastAPI control plane scaffold
 - `pipeline` — realtime call runtime scaffold
 - `jobs` — async worker scaffold
@@ -33,6 +33,16 @@ The focus right now is:
 8. Verify Alembic head, required indexes, and seed health with `make db-verify ENV=dev`
 9. In separate terminals run `make backend ENV=dev`, `make pipeline ENV=dev`, `make jobs ENV=dev`, and `make mock`
 
+Minimal local-first app flow without `make` also works:
+
+1. `cp .env.example .env`
+2. `npm install`
+3. `uv sync`
+4. `npm run db:migrate`
+5. `npm run db:seed`
+6. `npm run dev:backend`
+7. `npm run dev:frontend`
+
 Local defaults after startup:
 
 - mock design: `http://localhost:3000`
@@ -46,11 +56,19 @@ Local defaults after startup:
 - `VOICE_ENVIRONMENT=dev|test|prod` selects which database URL is active
 - `VOICE_DATABASE_URL` can override everything for one-off runs
 - `VOICE_DATABASE_URL_DEV`, `VOICE_DATABASE_URL_TEST`, and `VOICE_DATABASE_URL_PROD` hold your Supabase connection strings
+- `VOICE_SESSION_SECRET` signs backend session cookies and must be set explicitly in production
 - for local development on typical IPv4 networks, prefer Supabase session-pooler URLs over direct `db.<ref>.supabase.co` URLs
 - `test` falls back to the `dev` database when its own URL is not set
 - `prod` still fails fast if its database URL is not configured
 - PostgreSQL connections automatically use the private `app_private` schema, so application tables stay out of Supabase's default `public` data API surface
 - Docker-backed local Postgres remains optional, but it is no longer the default path
+
+## Auth And Seed Bootstrap
+
+- Auth is cookie-backed and enforced by the backend for app APIs
+- `voice-seed` creates or refreshes the first platform admin, default tenant workspace, and provider accounts
+- `VOICE_SEED_MODE=demo` adds realistic mock workflows and call history for local demos
+- `VOICE_SEED_MODE=minimal` creates a clean production-style starting point without sample business data
 
 ## Product Delivery Loop
 

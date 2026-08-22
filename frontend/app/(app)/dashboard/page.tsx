@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Activity, ArrowRight, CalendarCheck2, PhoneCall, RadioTower, ShieldCheck } from "lucide-react";
 import { useMockApp } from "@/lib/mock-app";
 import { rangeMultipliers } from "@/lib/mock-data";
-import { Badge, Button, Card, PageHeader, StatCard } from "@/components/ui";
+import { Badge, Button, Card, EmptyState, PageHeader, StatCard } from "@/components/ui";
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -167,34 +167,41 @@ export default function DashboardPage() {
           </div>
 
           <div className="mt-5 space-y-3">
-            {callHistory.slice(0, 4).map((call) => (
-              <button
-                key={call.id}
-                className="w-full rounded-2xl border border-border bg-white p-4 text-left transition hover:border-[rgba(102,89,255,0.24)] hover:bg-[#fcfcff]"
-                onClick={() => {
-                  selectCall(call.id);
-                  router.push("/calls");
-                }}
-                type="button"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="font-medium">
-                      {call.leadName} · {call.company}
-                    </p>
-                    <p className="mt-1 text-sm text-[#6D6D78]">
-                      {call.agentName} · {call.time}
-                    </p>
+            {callHistory.length ? (
+              callHistory.slice(0, 4).map((call) => (
+                <button
+                  key={call.id}
+                  className="w-full rounded-2xl border border-border bg-white p-4 text-left transition hover:border-[rgba(102,89,255,0.24)] hover:bg-[#fcfcff]"
+                  onClick={() => {
+                    selectCall(call.id);
+                    router.push("/calls");
+                  }}
+                  type="button"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-medium">
+                        {call.leadName} · {call.company}
+                      </p>
+                      <p className="mt-1 text-sm text-[#6D6D78]">
+                        {call.agentName} · {call.time}
+                      </p>
+                    </div>
+                    <Badge tone={call.statusTone}>{call.outcome}</Badge>
                   </div>
-                  <Badge tone={call.statusTone}>{call.outcome}</Badge>
-                </div>
-                <p className="mt-3 text-sm leading-6 text-[#4B4B59]">{call.summary}</p>
-                <div className="mt-3 inline-flex items-center gap-2 text-sm font-medium text-accent">
-                  Review call
-                  <ArrowRight size={15} />
-                </div>
-              </button>
-            ))}
+                  <p className="mt-3 text-sm leading-6 text-[#4B4B59]">{call.summary}</p>
+                  <div className="mt-3 inline-flex items-center gap-2 text-sm font-medium text-accent">
+                    Review call
+                    <ArrowRight size={15} />
+                  </div>
+                </button>
+              ))
+            ) : (
+              <EmptyState
+                title="No reviewed calls yet"
+                description="Run the first call to populate review history, outcomes, and downstream sync signals here."
+              />
+            )}
           </div>
         </Card>
       </section>

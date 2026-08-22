@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { useMockApp } from "@/lib/mock-app";
+import { api } from "@/lib/api-client";
 import { Badge, Button, Card, Input, Modal, PageHeader } from "@/components/ui";
 
 type WorkspaceRecord = {
@@ -10,20 +11,6 @@ type WorkspaceRecord = {
   name: string;
   is_default: boolean;
 };
-
-const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8100";
-
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
-    cache: "no-store",
-  });
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
-  }
-  return response.status === 204 ? (undefined as T) : ((await response.json()) as T);
-}
 
 export default function WorkspacesPage() {
   const { tenantSlug, workspaceId, workspaceName, reloadWorkspaceContext } = useMockApp();
@@ -33,7 +20,7 @@ export default function WorkspacesPage() {
   const [name, setName] = useState("");
 
   async function loadWorkspaces() {
-    setWorkspaces(await request(`/api/v1/tenants/${tenantSlug}/workspaces`));
+    setWorkspaces(await api(`/api/v1/tenants/${tenantSlug}/workspaces`));
   }
 
   useEffect(() => {
@@ -42,7 +29,7 @@ export default function WorkspacesPage() {
 
   async function createWorkspace() {
     setIsOpen(false);
-    await request(`/api/v1/tenants/${tenantSlug}/workspaces`, {
+    await api(`/api/v1/tenants/${tenantSlug}/workspaces`, {
       method: "POST",
       body: JSON.stringify({ name, is_default: false }),
     });
@@ -54,7 +41,7 @@ export default function WorkspacesPage() {
     if (!editingWorkspace) {
       return;
     }
-    await request(`/api/v1/tenants/${tenantSlug}/workspaces/${editingWorkspace.workspace_id}`, {
+    await api(`/api/v1/tenants/${tenantSlug}/workspaces/${editingWorkspace.workspace_id}`, {
       method: "PATCH",
       body: JSON.stringify({ name }),
     });
@@ -67,7 +54,7 @@ export default function WorkspacesPage() {
   }
 
   async function makeDefault(nextWorkspace: WorkspaceRecord) {
-    await request(`/api/v1/tenants/${tenantSlug}/workspaces/${nextWorkspace.workspace_id}`, {
+    await api(`/api/v1/tenants/${tenantSlug}/workspaces/${nextWorkspace.workspace_id}`, {
       method: "PATCH",
       body: JSON.stringify({ is_default: true }),
     });
@@ -76,7 +63,7 @@ export default function WorkspacesPage() {
   }
 
   async function removeWorkspace(nextWorkspace: WorkspaceRecord) {
-    await request(`/api/v1/tenants/${tenantSlug}/workspaces/${nextWorkspace.workspace_id}`, {
+    await api(`/api/v1/tenants/${tenantSlug}/workspaces/${nextWorkspace.workspace_id}`, {
       method: "DELETE",
     });
     await loadWorkspaces();

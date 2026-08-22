@@ -6,18 +6,15 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useRef,
   useState,
 } from "react";
+import { useRouter } from "next/navigation";
 import {
   createActiveCall,
   createAgent,
   dateRanges,
   demoScenarios,
   getTimeLabel,
-  initialAgents,
-  initialCallHistory,
-  initialConnections,
   initialNotifications,
   type ActiveCall,
   type Agent,
@@ -26,27 +23,37 @@ import {
   type DemoScenario,
   type NotificationItem,
 } from "@/lib/mock-data";
+import { ApiError, api } from "@/lib/api-client";
+import { Button } from "@/components/ui";
 
 type CallsView = "launch" | "live" | "review";
 
 type MockAppContextValue = {
+  currentUser: {
+    id: string;
+    email: string;
+    displayName: string;
+    isPlatformAdmin: boolean;
+    role: string;
+  } | null;
   tenantSlug: string;
   workspaceId: string;
   workspaceName: string;
   agents: Agent[];
   selectedAgentId: string;
-  selectedAgent: Agent;
+  selectedAgent: Agent | null;
   connections: Connection[];
   activeCall: ActiveCall | null;
   callHistory: CallRecord[];
   selectedCallId: string;
-  selectedCall: CallRecord;
+  selectedCall: CallRecord | null;
   callsView: CallsView;
   notifications: NotificationItem[];
   scenarios: DemoScenario[];
   dateRange: string;
   selectAgent: (agentId: string) => void;
   reloadWorkspaceContext: (preferredWorkspaceId?: string) => Promise<void>;
+  signOut: () => Promise<void>;
   createNewAgent: (name?: string) => Promise<Agent>;
   deleteAgent: (agentId: string) => Promise<void>;
   updateAgent: (agentId: string, updater: (agent: Agent) => Agent) => Promise<void>;
@@ -172,13 +179,28 @@ type TenantResponse = {
   tenant_name: string;
 };
 
-const DEFAULT_TENANT = {
-  slug: "voice-demo",
-  name: "Voice Demo",
+type SessionMembershipResponse = {
+  membership_id: string;
+  tenant_id: string;
+  tenant_slug: string;
+  tenant_name: string;
+  workspace_id: string;
+  workspace_name: string;
+  workspace_is_default: boolean;
+  role: "admin" | "editor" | "viewer";
 };
 
-const DEFAULT_WORKSPACE_NAME = "Sales";
-const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8100";
+type SessionResponse = {
+  user: {
+    user_id: string;
+    email: string;
+    display_name: string;
+    is_platform_admin: boolean;
+  };
+  memberships: SessionMembershipResponse[];
+  active_membership: SessionMembershipResponse | null;
+};
+
 const MockAppContext = createContext<MockAppContextValue | null>(null);
 
 function agentKeyFromName(name: string) {
@@ -196,27 +218,6 @@ function mapProviderKind(category: Connection["category"]) {
     case "Knowledge":
       return "knowledge";
   }
-}
-
-async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {}),
-    },
-    cache: "no-store",
-  });
-
-  if (!response.ok) {
-    throw new Error(`API request failed: ${response.status}`);
-  }
-
-  if (response.status === 204) {
-    return undefined as T;
-  }
-
-  return (await response.json()) as T;
 }
 
 function toAgent(response: AgentStudioResponse): Agent {
@@ -276,66 +277,12 @@ function toCallRecord(response: CallResponse): CallRecord {
   };
 }
 
-async function ensureWorkspaceContext(): Promise<{
-  tenantSlug: string;
-  workspaceId: string;
-}> {
-  let tenants = await api<TenantResponse[]>("/api/v1/tenants");
-  if (!tenants.length) {
-    await api<TenantResponse>("/api/v1/tenants", {
-      method: "POST",
-      body: JSON.stringify({
-        slug: DEFAULT_TENANT.slug,
-        name: DEFAULT_TENANT.name,
-        status: "active",
-      }),
-    });
-    tenants = await api<TenantResponse[]>("/api/v1/tenants");
-  }
-
-  const tenant = tenants.find((item) => item.tenant_slug === DEFAULT_TENANT.slug) ?? tenants[0];
-  let workspaces = await api<WorkspaceRecord[]>(
-    `/api/v1/tenants/${tenant.tenant_slug}/workspaces`
-  );
-  if (!workspaces.length) {
-    await api<WorkspaceRecord>(`/api/v1/tenants/${tenant.tenant_slug}/workspaces`, {
-      method: "POST",
-      body: JSON.stringify({ name: DEFAULT_WORKSPACE_NAME, is_default: true }),
-    });
-    workspaces = await api<WorkspaceRecord[]>(`/api/v1/tenants/${tenant.tenant_slug}/workspaces`);
-  }
-
-  const workspace = workspaces.find((item) => item.is_default) ?? workspaces[0];
-  return { tenantSlug: tenant.tenant_slug, workspaceId: workspace.workspace_id };
-}
-
-async function resolveWorkspaceContext(preferredWorkspaceId?: string): Promise<{
-  tenantSlug: string;
-  workspaceId: string;
-}> {
-  const context = await ensureWorkspaceContext();
-  if (!preferredWorkspaceId) {
-    return context;
-  }
-
-  const workspaces = await api<WorkspaceRecord[]>(
-    `/api/v1/tenants/${context.tenantSlug}/workspaces`
-  );
-  const workspace =
-    workspaces.find((item) => item.workspace_id === preferredWorkspaceId) ??
-    workspaces.find((item) => item.is_default) ??
-    workspaces[0];
-
-  return {
-    tenantSlug: context.tenantSlug,
-    workspaceId: workspace.workspace_id,
-  };
-}
-
 export function MockAppProvider({ children }: { children: ReactNode }) {
-  const [tenantSlug, setTenantSlug] = useState(DEFAULT_TENANT.slug);
+  const router = useRouter();
+  const [currentUser, setCurrentUser] = useState<MockAppContextValue["currentUser"]>(null);
+  const [tenantSlug, setTenantSlug] = useState("");
   const [workspaceId, setWorkspaceId] = useState("");
-  const [workspaceName, setWorkspaceName] = useState(DEFAULT_WORKSPACE_NAME);
+  const [workspaceName, setWorkspaceName] = useState("");
   const [agents, setAgents] = useState<Agent[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState("");
   const [connections, setConnections] = useState<Connection[]>([]);
@@ -346,11 +293,60 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
   const [notifications, setNotifications] = useState(initialNotifications);
   const [dateRange, setDateRange] = useState(dateRanges[1]);
   const [isReady, setIsReady] = useState(false);
-  const initializedRef = useRef(false);
+  const [bootstrapError, setBootstrapError] = useState("");
+
+  async function resolveSession(preferredWorkspaceId?: string): Promise<{
+    currentUser: NonNullable<MockAppContextValue["currentUser"]>;
+    tenantSlug: string;
+    workspaceId: string;
+    workspaceName: string;
+  } | null> {
+    const session = await api<SessionResponse>("/api/v1/auth/me");
+    const memberships = session.memberships;
+    const activeMembership =
+      memberships.find((membership) => membership.workspace_id === preferredWorkspaceId) ??
+      session.active_membership ??
+      memberships.find((membership) => membership.workspace_is_default) ??
+      memberships[0];
+
+    setCurrentUser({
+      id: session.user.user_id,
+      email: session.user.email,
+      displayName: session.user.display_name,
+      isPlatformAdmin: session.user.is_platform_admin,
+      role: activeMembership?.role ?? "admin",
+    });
+    setBootstrapError("");
+
+    if (!activeMembership) {
+      return null;
+    }
+
+    return {
+      currentUser: {
+        id: session.user.user_id,
+        email: session.user.email,
+        displayName: session.user.display_name,
+        isPlatformAdmin: session.user.is_platform_admin,
+        role: activeMembership.role,
+      },
+      tenantSlug: activeMembership.tenant_slug,
+      workspaceId: activeMembership.workspace_id,
+      workspaceName: activeMembership.workspace_name,
+    };
+  }
 
   async function refreshState(context?: { tenantSlug: string; workspaceId: string }) {
     const currentTenantSlug = context?.tenantSlug ?? tenantSlug;
     const currentWorkspaceId = context?.workspaceId ?? workspaceId;
+    if (!currentTenantSlug || !currentWorkspaceId) {
+      setAgents([]);
+      setConnections([]);
+      setCallHistory([]);
+      setSelectedAgentId("");
+      setSelectedCallId("");
+      return;
+    }
     const state = await api<AppStateResponse>(
       `/api/v1/tenants/${currentTenantSlug}/workspaces/${currentWorkspaceId}/app-state`
     );
@@ -377,142 +373,49 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
     });
   }
 
-  async function bootstrapWorkspace(currentTenantSlug: string, currentWorkspaceId: string) {
-    const state = await api<AppStateResponse>(
-      `/api/v1/tenants/${currentTenantSlug}/workspaces/${currentWorkspaceId}/app-state`
-    );
-    const createdAgents: Array<{ source: Agent; id: string }> = [];
-
-    if (!state.agents.length) {
-      for (const agent of initialAgents) {
-        const created = await api<AgentStudioResponse>(
-          `/api/v1/tenants/${currentTenantSlug}/workspaces/${currentWorkspaceId}/agents`,
-          {
-            method: "POST",
-            body: JSON.stringify({
-              agent_key: agentKeyFromName(agent.name),
-              name: agent.name,
-              status: agent.status.toLowerCase(),
-              initial_version: {
-                pipeline_mode: "stt_llm_tts",
-                routing_config: {},
-                vendor_config: { stack: agent.stack },
-              },
-            }),
-          }
-        );
-        await api<AgentStudioResponse>(
-          `/api/v1/tenants/${currentTenantSlug}/workspaces/${currentWorkspaceId}/agents/${created.agent_id}/studio`,
-          {
-            method: "PATCH",
-            body: JSON.stringify({
-              name: agent.name,
-              description: agent.description,
-              status: agent.status.toLowerCase(),
-              segment: agent.segment,
-              goal: agent.goal,
-              stack: agent.stack,
-              flow_nodes: agent.flowNodes,
-              flow_edges: agent.flowEdges,
-              tools_catalog: agent.toolsCatalog,
-              knowledge_sources: agent.knowledgeSources,
-              pipeline_mode: "stt_llm_tts",
-            }),
-          }
-        );
-        createdAgents.push({ source: agent, id: created.agent_id });
-      }
-    }
-
-    if (!state.connections.length) {
-      for (const connection of initialConnections) {
-        await api(`/api/v1/tenants/${currentTenantSlug}/provider-accounts`, {
-          method: "POST",
-          body: JSON.stringify({
-            provider_kind: mapProviderKind(connection.category),
-            vendor_name: connection.vendor,
-            label: connection.name,
-            status: connection.status === "Connected" ? "active" : "draft",
-            config: {
-              name: connection.name,
-              description: connection.description,
-              ui_status: connection.status,
-              detail: connection.detail,
-              last_checked: connection.lastChecked,
-            },
-          }),
-        });
-      }
-    }
-
-    if (state.calls.length) {
+  async function loadWorkspace(preferredWorkspaceId?: string) {
+    const resolved = await resolveSession(preferredWorkspaceId);
+    if (!resolved) {
+      setTenantSlug("");
+      setWorkspaceId("");
+      setWorkspaceName("");
+      setAgents([]);
+      setConnections([]);
+      setCallHistory([]);
+      setSelectedAgentId("");
+      setSelectedCallId("");
+      setBootstrapError("");
+      setIsReady(true);
       return;
     }
 
-    const agentsForCalls =
-      createdAgents.length > 0
-        ? createdAgents
-        : (await api<AppStateResponse>(
-            `/api/v1/tenants/${currentTenantSlug}/workspaces/${currentWorkspaceId}/app-state`
-          )).agents.map((agent) => ({
-            source: initialAgents.find((item) => item.name === agent.name) ?? initialAgents[0],
-            id: agent.agent_id,
-          }));
-
-    for (const call of initialCallHistory) {
-      const agentId = agentsForCalls.find((item) => item.source.name === call.agentName)?.id;
-      if (!agentId) {
-        continue;
-      }
-      await api(`/api/v1/tenants/${currentTenantSlug}/workspaces/${currentWorkspaceId}/calls`, {
-        method: "POST",
-        body: JSON.stringify({
-          agent_id: agentId,
-          lead_name: call.leadName,
-          company: call.company,
-          phone: call.phone,
-          scenario_name: call.scenarioName,
-          status: call.status,
-          duration: call.duration,
-          summary: call.summary,
-          outcome: call.outcome,
-          next_step: call.nextStep,
-          vendor_trace: call.vendorTrace,
-          synced_to_crm: call.syncedToCrm,
-          extracted_variables: call.extractedVariables,
-          tool_calls: call.toolCalls,
-          guardrails: call.guardrails,
-          transcript: call.transcript,
-        }),
-      });
-    }
-  }
-
-  async function loadWorkspace(preferredWorkspaceId?: string) {
-    const context = await resolveWorkspaceContext(preferredWorkspaceId);
-    setTenantSlug(context.tenantSlug);
-    setWorkspaceId(context.workspaceId);
-    await bootstrapWorkspace(context.tenantSlug, context.workspaceId);
-    await refreshState(context);
-    console.info("voice.initialize.ready", context);
+    setCurrentUser(resolved.currentUser);
+    setTenantSlug(resolved.tenantSlug);
+    setWorkspaceId(resolved.workspaceId);
+    setWorkspaceName(resolved.workspaceName);
+    await refreshState({
+      tenantSlug: resolved.tenantSlug,
+      workspaceId: resolved.workspaceId,
+    });
+    console.info("voice.initialize.ready", resolved);
     setIsReady(true);
   }
 
   useEffect(() => {
-    async function initialize() {
-      if (initializedRef.current) {
-        return;
-      }
-      initializedRef.current = true;
+    void (async () => {
       try {
         await loadWorkspace();
       } catch (error) {
+        if (error instanceof ApiError && error.status === 401) {
+          router.replace("/login");
+          return;
+        }
+        setBootstrapError("We couldn’t load the workspace. Check backend connectivity or reseed the environment, then retry.");
+        setIsReady(true);
         console.error("workspace initialization failed", error);
       }
-    }
-
-    void initialize();
-  }, []);
+    })();
+  }, [router]);
 
   useEffect(() => {
     if (!activeCall || !workspaceId) {
@@ -641,11 +544,12 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
     await refreshState();
   }
 
-  const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? agents[0];
-  const selectedCall = callHistory.find((call) => call.id === selectedCallId) ?? callHistory[0];
+  const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? agents[0] ?? null;
+  const selectedCall = callHistory.find((call) => call.id === selectedCallId) ?? callHistory[0] ?? null;
 
   const value = useMemo<MockAppContextValue>(
     () => ({
+      currentUser,
       tenantSlug,
       workspaceId,
       workspaceName,
@@ -663,6 +567,11 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
       dateRange,
       selectAgent: setSelectedAgentId,
       reloadWorkspaceContext: loadWorkspace,
+      signOut: async () => {
+        await api("/api/v1/auth/logout", { method: "POST" });
+        setCurrentUser(null);
+        router.replace("/login");
+      },
       createNewAgent: async (name = "New conversion flow") => {
         const template = createAgent(name);
         const created = await api<AgentStudioResponse>(
@@ -954,8 +863,10 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
       callHistory,
       callsView,
       connections,
+      currentUser,
       dateRange,
       notifications,
+      router,
       selectedAgent,
       selectedAgentId,
       selectedCall,
@@ -966,10 +877,50 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
     ]
   );
 
-  if (!isReady || !selectedAgent || !selectedCall) {
+  if (!isReady) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-canvas text-sm text-[#6D6D78]">
         Loading workspace...
+      </div>
+    );
+  }
+
+  if (bootstrapError) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-canvas p-6">
+        <div className="w-full max-w-xl rounded-[24px] border border-border bg-white p-8 text-center shadow-surface">
+          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-accent">Workspace bootstrap</p>
+          <h1 className="mt-4 text-2xl font-semibold text-[#17171F]">The app couldn’t finish loading</h1>
+          <p className="mt-3 text-sm leading-6 text-[#6D6D78]">{bootstrapError}</p>
+          <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+            <Button onClick={() => void loadWorkspace()}>Retry load</Button>
+            <Button onClick={() => router.replace("/login")} variant="secondary">
+              Back to login
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!workspaceId || !tenantSlug) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-canvas p-6">
+        <div className="w-full max-w-xl rounded-[24px] border border-border bg-white p-8 text-center shadow-surface">
+          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-accent">Workspace access</p>
+          <h1 className="mt-4 text-2xl font-semibold text-[#17171F]">No workspace is assigned yet</h1>
+          <p className="mt-3 text-sm leading-6 text-[#6D6D78]">
+            Your account is authenticated, but it does not have a workspace membership yet. Add the first membership or reseed the environment, then try again.
+          </p>
+          <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+            <Button onClick={() => void loadWorkspace()} variant="secondary">
+              Retry
+            </Button>
+            <Button onClick={() => void api("/api/v1/auth/logout", { method: "POST" }).then(() => router.replace("/login"))}>
+              Sign out
+            </Button>
+          </div>
+        </div>
       </div>
     );
   }

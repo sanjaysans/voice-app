@@ -42,3 +42,18 @@ def test_test_environment_falls_back_to_dev_database_url() -> None:
 def test_prod_environment_requires_explicit_database_url() -> None:
     with pytest.raises(ValueError, match="environment 'prod'"):
         Settings(_env_file=None, environment="prod")
+
+
+def test_dev_environment_uses_default_session_secret() -> None:
+    settings = Settings(_env_file=None, database_url="sqlite+pysqlite:///:memory:")
+
+    assert settings.session_secret == "voice-local-dev-session-secret"
+
+
+def test_prod_environment_requires_explicit_session_secret() -> None:
+    with pytest.raises(ValueError, match="VOICE_SESSION_SECRET"):
+        Settings(
+            _env_file=None,
+            environment="prod",
+            database_url="postgresql+psycopg://voice:prod@db.example.com:5432/proddb",
+        )

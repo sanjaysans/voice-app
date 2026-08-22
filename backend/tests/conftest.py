@@ -5,14 +5,19 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from voice_backend.auth import AuthContext
 from voice_backend.models import Base
 from voice_backend.repositories import (
     AgentRepository,
     CallRepository,
+    MembershipRepository,
     ProviderAccountRepository,
     TenantRepository,
+    UserRepository,
     WorkspaceRepository,
 )
+from voice_backend.schemas import SessionMembershipRecord
+from voice_backend.security import SessionPayload, hash_password
 
 
 @pytest.fixture
@@ -35,13 +40,22 @@ def seeded_domain(session: Session) -> dict[str, object]:
     workspaces = WorkspaceRepository(session)
     agents = AgentRepository(session)
     calls = CallRepository(session)
+    memberships = MembershipRepository(session)
     provider_accounts = ProviderAccountRepository(session)
+    users = UserRepository(session)
 
     tenant = tenants.create(slug="voice-demo", name="Voice Demo")
     foreign_tenant = tenants.create(slug="other-tenant", name="Other Tenant")
     workspace = workspaces.create(tenant.id, "Sales", is_default=True)
     secondary_workspace = workspaces.create(tenant.id, "Support", is_default=False)
     workspaces.create(foreign_tenant.id, "Foreign Sales", is_default=True)
+    user = users.create(
+        "admin@voice.local",
+        "Voice Admin",
+        password_hash=hash_password("voice-demo-password", iterations=1_000),
+        is_platform_admin=True,
+    )
+    membership = memberships.create(tenant.id, workspace.id, user.id, "admin")
     agent = agents.create_definition(
         tenant.id, workspace.id, "lead-router", "Lead Router", status="published"
     )
@@ -97,6 +111,8 @@ def seeded_domain(session: Session) -> dict[str, object]:
         "foreign_tenant": foreign_tenant,
         "workspace": workspace,
         "secondary_workspace": secondary_workspace,
+        "membership": membership,
+        "user": user,
         "agent": agent,
         "support_agent": support_agent,
         "provider_account": provider_account,
@@ -106,3 +122,40 @@ def seeded_domain(session: Session) -> dict[str, object]:
         "second_call": second_call,
         "support_call": support_call,
     }
+
+
+@pytest.fixture
+def auth_context(seeded_domain) -> AuthContext:
+    workspace = seeded_domain["workspace"]
+    tenant = seeded_domain["tenant"]
+    user = seeded_domain["user"]
+    membership = seeded_domain["membership"]
+    return AuthContext(
+        payload=SessionPayload(user_id=user.id, expires_at=2_000_000_000),
+        user_id=user.id,
+        email=user.email,
+        display_name=user.display_name,
+        is_platform_admin=user.is_platform_admin,
+        memberships=(
+            SessionMembershipRecord(
+                membership_id=membership.id,
+                tenant_id=tenant.id,
+                tenant_slug=tenant.slug,
+                tenant_name=tenant.name,
+                workspace_id=workspace.id,
+                workspace_name=workspace.name,
+                workspace_is_default=workspace.is_default,
+                role="admin",
+            ),
+        ),
+        active_membership=SessionMembershipRecord(
+            membership_id=membership.id,
+            tenant_id=tenant.id,
+            tenant_slug=tenant.slug,
+            tenant_name=tenant.name,
+            workspace_id=workspace.id,
+            workspace_name=workspace.name,
+            workspace_is_default=workspace.is_default,
+            role="admin",
+        ),
+    )

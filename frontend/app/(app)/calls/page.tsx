@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   CheckCircle2,
   Clock3,
@@ -11,7 +11,7 @@ import {
   Trash2
 } from "lucide-react";
 import { useMockApp } from "@/lib/mock-app";
-import { Badge, Button, Card, Input, PageHeader, Select } from "@/components/ui";
+import { Badge, Button, Card, EmptyState, Input, PageHeader, Select } from "@/components/ui";
 
 const callViews = [
   { id: "launch", label: "Launch" },
@@ -42,6 +42,28 @@ export default function CallsPage() {
   const [phone, setPhone] = useState(selectedScenario.phone);
   const [error, setError] = useState("");
   const currentAgentName = agents.find((agent) => agent.id === agentId)?.name ?? agents[0]?.name;
+
+  useEffect(() => {
+    setAgentId((current) =>
+      agents.some((agent) => agent.id === current) ? current : selectedAgentId || agents[0]?.id || ""
+    );
+  }, [agents, selectedAgentId]);
+
+  if (!agents.length) {
+    return (
+      <div className="space-y-6">
+        <PageHeader
+          eyebrow="Operate"
+          title="Calls"
+          description="Launch a call, watch live progression, and review the full result with transcript, tool usage, and structured outcomes."
+        />
+        <EmptyState
+          title="Create a workflow before launching calls"
+          description="Calls depend on at least one agent workflow. Add or seed a workflow first, then come back here to launch and review calls."
+        />
+      </div>
+    );
+  }
 
   const handleScenarioChange = (value: string) => {
     const scenario = scenarios.find((item) => item.id === value) ?? scenarios[0];
@@ -171,28 +193,34 @@ export default function CallsPage() {
               <Badge tone="neutral">{callHistory.length} calls</Badge>
             </div>
 
-            <div className="mt-4 space-y-3">
-              {callHistory.map((call) => (
-                <button
-                  key={call.id}
-                  className="w-full rounded-2xl border border-border bg-white p-4 text-left transition hover:border-[rgba(102,89,255,0.22)]"
-                  onClick={() => selectCall(call.id)}
-                  type="button"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="font-medium">
-                        {call.leadName} · {call.company}
-                      </p>
-                      <p className="mt-1 text-sm text-[#6D6D78]">
-                        {call.agentName} · {call.time}
-                      </p>
+            {callHistory.length ? (
+              <div className="mt-4 space-y-3">
+                {callHistory.map((call) => (
+                  <button
+                    key={call.id}
+                    className="w-full rounded-2xl border border-border bg-white p-4 text-left transition hover:border-[rgba(102,89,255,0.22)]"
+                    onClick={() => selectCall(call.id)}
+                    type="button"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-medium">
+                          {call.leadName} · {call.company}
+                        </p>
+                        <p className="mt-1 text-sm text-[#6D6D78]">
+                          {call.agentName} · {call.time}
+                        </p>
+                      </div>
+                      <Badge tone={call.statusTone}>{call.outcome}</Badge>
                     </div>
-                    <Badge tone={call.statusTone}>{call.outcome}</Badge>
-                  </div>
-                </button>
-              ))}
-            </div>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="mt-4 rounded-2xl border border-dashed border-border bg-[#fcfcff] p-6 text-sm leading-6 text-[#6D6D78]">
+                No completed calls yet. Launch the first test run to populate review history.
+              </div>
+            )}
           </Card>
         </div>
 
@@ -300,7 +328,7 @@ export default function CallsPage() {
             </Card>
           ) : null}
 
-          {callsView === "review" ? (
+          {callsView === "review" && selectedCall ? (
             <Card>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
@@ -404,6 +432,13 @@ export default function CallsPage() {
               </div>
             </div>
             </Card>
+          ) : null}
+
+          {callsView === "review" && !selectedCall ? (
+            <EmptyState
+              title="No call review is available yet"
+              description="Launch a call or open a seeded record to inspect transcript, variables, and sync actions here."
+            />
           ) : null}
         </div>
       </div>

@@ -28,19 +28,27 @@ class Settings(BaseSettings):
     )
     admin_email: str = Field(
         default="admin@voice.local",
-        validation_alias=AliasChoices("VOICE_DEV_ADMIN_EMAIL"),
+        validation_alias=AliasChoices("VOICE_ADMIN_EMAIL", "VOICE_DEV_ADMIN_EMAIL"),
     )
     admin_name: str = Field(
         default="Voice Admin",
-        validation_alias=AliasChoices("VOICE_DEV_ADMIN_NAME"),
+        validation_alias=AliasChoices("VOICE_ADMIN_NAME", "VOICE_DEV_ADMIN_NAME"),
+    )
+    admin_password: str = Field(
+        default="voice-demo-password",
+        validation_alias=AliasChoices("VOICE_ADMIN_PASSWORD", "VOICE_DEV_ADMIN_PASSWORD"),
     )
     tenant_name: str = Field(
         default="Voice Demo Tenant",
-        validation_alias=AliasChoices("VOICE_DEV_TENANT_NAME"),
+        validation_alias=AliasChoices("VOICE_TENANT_NAME", "VOICE_DEV_TENANT_NAME"),
     )
     workspace_name: str = Field(
         default="Voice Demo Workspace",
-        validation_alias=AliasChoices("VOICE_DEV_WORKSPACE_NAME"),
+        validation_alias=AliasChoices("VOICE_WORKSPACE_NAME", "VOICE_DEV_WORKSPACE_NAME"),
+    )
+    seed_mode: Literal["demo", "minimal"] = Field(
+        default="demo",
+        validation_alias=AliasChoices("VOICE_SEED_MODE"),
     )
 
     model_config = SettingsConfigDict(
@@ -53,18 +61,27 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def resolve_database_url(self) -> "Settings":
         if self.database_url is not None:
-            return self
+            resolved = self
+        else:
+            database_urls = {
+                "dev": self.database_url_dev or DEFAULT_DATABASE_URL,
+                "test": self.database_url_test or self.database_url_dev or DEFAULT_DATABASE_URL,
+                "prod": self.database_url_prod,
+            }
+            selected_database_url = database_urls[self.environment]
+            if selected_database_url is None:
+                raise ValueError(
+                    f"database URL for environment '{self.environment}' is not configured"
+                )
+            object.__setattr__(self, "database_url", selected_database_url)
+            resolved = self
 
-        database_urls = {
-            "dev": self.database_url_dev or DEFAULT_DATABASE_URL,
-            "test": self.database_url_test or self.database_url_dev or DEFAULT_DATABASE_URL,
-            "prod": self.database_url_prod,
-        }
-        selected_database_url = database_urls[self.environment]
-        if selected_database_url is None:
-            raise ValueError(f"database URL for environment '{self.environment}' is not configured")
-        object.__setattr__(self, "database_url", selected_database_url)
-        return self
+        if resolved.environment == "prod" and resolved.seed_mode == "demo":
+            object.__setattr__(resolved, "seed_mode", "minimal")
+        if resolved.environment == "prod" and resolved.admin_password == "voice-demo-password":
+            raise ValueError("VOICE_ADMIN_PASSWORD must be configured for production seeding")
+
+        return resolved
 
     @property
     def project_root(self) -> Path:

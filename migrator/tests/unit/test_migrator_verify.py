@@ -30,6 +30,7 @@ def test_verify_database_returns_seed_counts_for_initialized_database(tmp_path) 
                 id=uuid.uuid4(),
                 email="admin@voice.local",
                 display_name="Voice Admin",
+                password_hash="hashed",
                 is_platform_admin=True,
             )
         )

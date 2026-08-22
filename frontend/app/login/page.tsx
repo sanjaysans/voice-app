@@ -1,17 +1,36 @@
 "use client";
 
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, Mic, ShieldCheck, Sparkles } from "lucide-react";
 import { Button, Input } from "@/components/ui";
+import { ApiError, api } from "@/lib/api-client";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("ops@voicehq.ai");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [isCheckingSession, setIsCheckingSession] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  useEffect(() => {
+    void (async () => {
+      try {
+        await api("/api/v1/auth/me");
+        router.replace("/dashboard");
+      } catch (cause) {
+        if (cause instanceof ApiError && cause.status === 401) {
+          setIsCheckingSession(false);
+          return;
+        }
+        console.error("login session check failed", cause);
+        setIsCheckingSession(false);
+      }
+    })();
+  }, [router]);
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
     if (!email || !password) {
@@ -20,7 +39,22 @@ export default function LoginPage() {
     }
 
     setError("");
-    router.push("/dashboard");
+    setIsSubmitting(true);
+    try {
+      await api("/api/v1/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ email, password }),
+      });
+      router.push("/dashboard");
+    } catch (cause) {
+      setError(
+        cause instanceof ApiError && cause.status === 401
+          ? "The email or password is incorrect."
+          : "Unable to sign in right now. Try again in a moment."
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -59,8 +93,13 @@ export default function LoginPage() {
               </div>
             ) : null}
 
-            <Button className="w-full justify-center" size="lg" type="submit">
-              Continue to workspace
+            <Button
+              className="w-full justify-center"
+              disabled={isCheckingSession || isSubmitting}
+              size="lg"
+              type="submit"
+            >
+              {isCheckingSession ? "Checking session..." : isSubmitting ? "Signing in..." : "Continue to workspace"}
               <ArrowRight size={16} />
             </Button>
           </form>

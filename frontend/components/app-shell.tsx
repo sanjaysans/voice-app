@@ -63,8 +63,15 @@ const navSections = [
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const { notifications, dismissNotification, connections } = useMockApp();
+  const { currentUser, notifications, dismissNotification, connections, workspaceName, signOut } =
+    useMockApp();
   const itemsNeedingReview = connections.filter((connection) => connection.status !== "Connected").length;
+  const todayLabel = new Intl.DateTimeFormat("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  }).format(new Date());
 
   return (
     <div className="flex min-h-screen bg-canvas">
@@ -126,8 +133,8 @@ export function AppShell({ children }: { children: ReactNode }) {
               <Settings2 size={18} />
             </div>
             <div>
-              <p className="text-sm font-medium">Acme Health</p>
-              <p className="text-xs text-[rgba(255,255,255,0.64)]">US production workspace</p>
+              <p className="text-sm font-medium">{workspaceName || "Workspace setup pending"}</p>
+              <p className="text-xs text-[rgba(255,255,255,0.64)]">Authenticated operator workspace</p>
             </div>
           </div>
         </div>
@@ -137,7 +144,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <header className="sticky top-0 z-30 border-b border-border bg-[rgba(247,247,249,0.92)] backdrop-blur">
           <div className="flex min-h-[84px] flex-col gap-4 px-6 py-4 lg:px-8 xl:flex-row xl:items-center xl:justify-between">
             <div>
-              <p className="text-xs uppercase tracking-[0.22em] text-[#6D6D78]">Friday, August 21, 2026</p>
+              <p className="text-xs uppercase tracking-[0.22em] text-[#6D6D78]">{todayLabel}</p>
               <div className="mt-2 flex flex-wrap items-center gap-3">
                 <p className="text-sm text-[#4B4B59]">Unified AI calling workspace for workflow design, launch, and review.</p>
                 <Badge tone={itemsNeedingReview ? "warning" : "success"}>
@@ -161,9 +168,40 @@ export function AppShell({ children }: { children: ReactNode }) {
                 </div>
               </div>
               <div className="rounded-2xl border border-border bg-white px-4 py-3 text-right">
-                <p className="text-sm font-medium">Sanjay Kumar</p>
-                <p className="text-xs text-[#6D6D78]">Admin</p>
+                <p className="text-sm font-medium">{currentUser?.displayName ?? "Voice user"}</p>
+                <p className="text-xs text-[#6D6D78]">{currentUser?.role ?? "Admin"}</p>
               </div>
+              <Button onClick={() => void signOut()} variant="secondary">
+                Sign out
+              </Button>
+              <div className="rounded-2xl border border-border bg-white px-4 py-3 text-right">
+                <p className="text-sm font-medium">{currentUser?.email ?? "No session"}</p>
+                <p className="text-xs text-[#6D6D78]">
+                  {currentUser?.isPlatformAdmin ? "Platform admin" : "Workspace access"}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="border-t border-border px-4 py-3 lg:hidden">
+            <div className="flex gap-2 overflow-x-auto pb-1">
+              {navSections.flatMap((section) => section.items).map((item) => {
+                const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+                return (
+                  <Link
+                    key={item.href}
+                    className={cn(
+                      "whitespace-nowrap rounded-xl px-3 py-2 text-sm font-medium transition",
+                      active
+                        ? "bg-[rgba(102,89,255,0.12)] text-accent"
+                        : "bg-white text-[#6D6D78]"
+                    )}
+                    href={item.href}
+                  >
+                    {item.label}
+                  </Link>
+                );
+              })}
             </div>
           </div>
 

@@ -29,13 +29,17 @@ export default function AgentBuilderPage() {
     toggleKnowledge,
     publishAgent
   } = useMockApp();
-  const [selectedNodeId, setSelectedNodeId] = useState(selectedAgent.flowNodes[0]?.id ?? "");
+  const [selectedNodeId, setSelectedNodeId] = useState(selectedAgent?.flowNodes[0]?.id ?? "");
   const [selectedTab, setSelectedTab] = useState("Prompt");
   const selectedNode =
-    selectedAgent.flowNodes.find((node) => node.id === selectedNodeId) ??
-    selectedAgent.flowNodes[0];
+    selectedAgent?.flowNodes.find((node) => node.id === selectedNodeId) ??
+    selectedAgent?.flowNodes[0];
 
   useEffect(() => {
+    if (!selectedAgent) {
+      setSelectedNodeId("");
+      return;
+    }
     setSelectedNodeId((current) =>
       selectedAgent.flowNodes.some((node) => node.id === current)
         ? current
@@ -43,7 +47,7 @@ export default function AgentBuilderPage() {
     );
   }, [selectedAgent]);
 
-  if (!selectedNode) {
+  if (!selectedAgent || !selectedNode) {
     return (
       <div className="space-y-6">
         <PageHeader

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useMockApp } from "@/lib/mock-app";
+import { api } from "@/lib/api-client";
 import { Badge, Card, PageHeader } from "@/components/ui";
 
 type ProviderAccountRecord = {
@@ -15,13 +16,8 @@ type ProviderAccountRecord = {
   preview: Record<string, unknown>;
 };
 
-const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8100";
-
 async function fetchAccounts(tenantSlug: string) {
-  const response = await fetch(`${API_BASE}/api/v1/tenants/${tenantSlug}/provider-accounts`, {
-    cache: "no-store",
-  });
-  return (await response.json()) as ProviderAccountRecord[];
+  return api<ProviderAccountRecord[]>(`/api/v1/tenants/${tenantSlug}/provider-accounts`);
 }
 
 export default function SecretsPage() {

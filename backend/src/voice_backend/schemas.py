@@ -20,6 +20,7 @@ ProviderKind = Literal[
     "webhook",
 ]
 PipelineMode = Literal["realtime_s2s", "stt_llm_tts", "stt_llm", "llm_tts"]
+WorkspaceRole = Literal["admin", "editor", "viewer"]
 
 
 class TenantOverview(BaseModel):
@@ -30,6 +31,35 @@ class TenantOverview(BaseModel):
     agent_count: int
     active_call_count: int
     total_call_count: int
+
+
+class LoginInput(BaseModel):
+    email: str
+    password: str
+
+
+class SessionUserRecord(BaseModel):
+    user_id: UUID
+    email: str
+    display_name: str
+    is_platform_admin: bool
+
+
+class SessionMembershipRecord(BaseModel):
+    membership_id: UUID
+    tenant_id: UUID
+    tenant_slug: str
+    tenant_name: str
+    workspace_id: UUID
+    workspace_name: str
+    workspace_is_default: bool
+    role: WorkspaceRole
+
+
+class SessionRecord(BaseModel):
+    user: SessionUserRecord
+    memberships: list[SessionMembershipRecord]
+    active_membership: SessionMembershipRecord | None
 
 
 class AgentSummary(BaseModel):
