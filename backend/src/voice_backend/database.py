@@ -27,7 +27,9 @@ def configure_database(app, settings: Settings) -> None:
 
 
 def get_session() -> Generator[Session, None, None]:
-    raise RuntimeError("request-scoped session dependency should be resolved through get_request_session")
+    raise RuntimeError(
+        "request-scoped session dependency should be resolved through get_request_session"
+    )
 
 
 def get_request_session(request: Request) -> Generator[Session, None, None]:

@@ -17,9 +17,15 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("VOICE_DATABASE_URL"),
     )
-    database_url_dev: str | None = Field(default=None, validation_alias=AliasChoices("VOICE_DATABASE_URL_DEV"))
-    database_url_test: str | None = Field(default=None, validation_alias=AliasChoices("VOICE_DATABASE_URL_TEST"))
-    database_url_prod: str | None = Field(default=None, validation_alias=AliasChoices("VOICE_DATABASE_URL_PROD"))
+    database_url_dev: str | None = Field(
+        default=None, validation_alias=AliasChoices("VOICE_DATABASE_URL_DEV")
+    )
+    database_url_test: str | None = Field(
+        default=None, validation_alias=AliasChoices("VOICE_DATABASE_URL_TEST")
+    )
+    database_url_prod: str | None = Field(
+        default=None, validation_alias=AliasChoices("VOICE_DATABASE_URL_PROD")
+    )
     admin_email: str = Field(
         default="admin@voice.local",
         validation_alias=AliasChoices("VOICE_DEV_ADMIN_EMAIL"),
@@ -56,9 +62,7 @@ class Settings(BaseSettings):
         }
         selected_database_url = database_urls[self.environment]
         if selected_database_url is None:
-            raise ValueError(
-                f"database URL for environment '{self.environment}' is not configured"
-            )
+            raise ValueError(f"database URL for environment '{self.environment}' is not configured")
         object.__setattr__(self, "database_url", selected_database_url)
         return self
 

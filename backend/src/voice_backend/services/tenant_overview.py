@@ -22,7 +22,9 @@ class TenantOverviewService:
             return None
 
         workspaces = self.workspaces.list_by_tenant(tenant.id)
-        agent_count = sum(len(self.agents.list_by_workspace(tenant.id, workspace.id)) for workspace in workspaces)
+        agent_count = sum(
+            len(self.agents.list_by_workspace(tenant.id, workspace.id)) for workspace in workspaces
+        )
         return TenantOverview(
             tenant_id=tenant.id,
             tenant_slug=tenant.slug,

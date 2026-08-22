@@ -52,7 +52,9 @@ def test_check_database_returns_failure_when_connection_raises(monkeypatch) -> N
 
 @pytest.mark.asyncio
 async def test_ready_endpoint_returns_503_when_database_is_unreachable(monkeypatch) -> None:
-    monkeypatch.setattr(backend_app, "_check_database", lambda settings: (False, "database offline"))
+    monkeypatch.setattr(
+        backend_app, "_check_database", lambda settings: (False, "database offline")
+    )
     async with AsyncClient(
         transport=ASGITransport(app=create_app(Settings())),
         base_url="http://testserver",
@@ -69,7 +71,9 @@ async def test_ready_endpoint_returns_503_when_database_is_unreachable(monkeypat
 
 @pytest.mark.asyncio
 async def test_ready_endpoint_returns_200_when_database_is_reachable(monkeypatch) -> None:
-    monkeypatch.setattr(backend_app, "_check_database", lambda settings: (True, "database reachable"))
+    monkeypatch.setattr(
+        backend_app, "_check_database", lambda settings: (True, "database reachable")
+    )
     async with AsyncClient(
         transport=ASGITransport(app=create_app(Settings())),
         base_url="http://testserver",

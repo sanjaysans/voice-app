@@ -34,8 +34,12 @@ def expected_alembic_heads(project_root: Path) -> set[str]:
     return set(script.get_heads())
 
 
-def verify_database(database_url: str, project_root: Path, require_seed: bool = True) -> dict[str, int]:
-    engine = create_engine(database_url, future=True, connect_args=build_engine_connect_args(database_url))
+def verify_database(
+    database_url: str, project_root: Path, require_seed: bool = True
+) -> dict[str, int]:
+    engine = create_engine(
+        database_url, future=True, connect_args=build_engine_connect_args(database_url)
+    )
     configure_engine(engine, database_url)
     inspector = inspect(engine)
     target_schema = inspection_schema(database_url)
@@ -51,17 +55,23 @@ def verify_database(database_url: str, project_root: Path, require_seed: bool = 
 
     expected_heads = expected_alembic_heads(project_root)
     alembic_table_name = (
-        f"{alembic_table_schema}.alembic_version" if alembic_table_schema is not None else "alembic_version"
+        f"{alembic_table_schema}.alembic_version"
+        if alembic_table_schema is not None
+        else "alembic_version"
     )
     with engine.begin() as connection:
-        current_head = connection.execute(text(f"select version_num from {alembic_table_name}")).scalar_one_or_none()
+        current_head = connection.execute(
+            text(f"select version_num from {alembic_table_name}")
+        ).scalar_one_or_none()
     if current_head not in expected_heads:
         raise DatabaseVerificationError(
             f"unexpected alembic head: expected one of {sorted(expected_heads)}, found {current_head}"
         )
 
     for table_name, expected_indexes in EXPECTED_INDEXES.items():
-        present_indexes = {item["name"] for item in inspector.get_indexes(table_name, schema=target_schema)}
+        present_indexes = {
+            item["name"] for item in inspector.get_indexes(table_name, schema=target_schema)
+        }
         missing_indexes = sorted(expected_indexes - present_indexes)
         if missing_indexes:
             raise DatabaseVerificationError(
@@ -75,7 +85,9 @@ def verify_database(database_url: str, project_root: Path, require_seed: bool = 
     with engine.begin() as connection:
         for table_name in SEED_REQUIRED_TABLES:
             table = Base.metadata.tables[table_name]
-            counts[table_name] = int(connection.execute(select(func.count()).select_from(table)).scalar_one())
+            counts[table_name] = int(
+                connection.execute(select(func.count()).select_from(table)).scalar_one()
+            )
 
     empty_tables = [table_name for table_name, count in counts.items() if count == 0]
     if empty_tables:

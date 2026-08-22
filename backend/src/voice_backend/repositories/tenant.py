@@ -19,3 +19,24 @@ class TenantRepository:
 
     def list_all(self) -> list[Tenant]:
         return list(self.session.scalars(select(Tenant).order_by(Tenant.name)))
+
+    def update(
+        self,
+        tenant: Tenant,
+        *,
+        slug: str | None = None,
+        name: str | None = None,
+        status: str | None = None,
+    ) -> Tenant:
+        if slug is not None:
+            tenant.slug = slug
+        if name is not None:
+            tenant.name = name
+        if status is not None:
+            tenant.status = status
+        self.session.flush()
+        return tenant
+
+    def delete(self, tenant: Tenant) -> None:
+        self.session.delete(tenant)
+        self.session.flush()

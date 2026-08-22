@@ -25,7 +25,9 @@ def upgrade() -> None:
         sa.Column("slug", sa.String(length=80), nullable=False),
         sa.Column("name", sa.String(length=120), nullable=False),
         sa.Column("status", sa.String(length=32), nullable=False, server_default="active"),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+        ),
         sa.UniqueConstraint("slug", name="uq_tenants_slug"),
         schema=DATABASE_SCHEMA,
     )
@@ -34,8 +36,12 @@ def upgrade() -> None:
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column("email", sa.String(length=255), nullable=False),
         sa.Column("display_name", sa.String(length=120), nullable=False),
-        sa.Column("is_platform_admin", sa.Boolean(), nullable=False, server_default=sa.text("false")),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column(
+            "is_platform_admin", sa.Boolean(), nullable=False, server_default=sa.text("false")
+        ),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+        ),
         sa.UniqueConstraint("email", name="uq_users_email"),
         schema=DATABASE_SCHEMA,
     )
@@ -50,7 +56,9 @@ def upgrade() -> None:
         ),
         sa.Column("name", sa.String(length=120), nullable=False),
         sa.Column("is_default", sa.Boolean(), nullable=False, server_default=sa.text("false")),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+        ),
         sa.UniqueConstraint("tenant_id", "name", name="uq_workspaces_tenant_name"),
         schema=DATABASE_SCHEMA,
     )
@@ -76,8 +84,12 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("role", sa.String(length=32), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-        sa.UniqueConstraint("tenant_id", "workspace_id", "user_id", name="uq_memberships_workspace_user"),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+        ),
+        sa.UniqueConstraint(
+            "tenant_id", "workspace_id", "user_id", name="uq_memberships_workspace_user"
+        ),
         schema=DATABASE_SCHEMA,
     )
     op.create_table(
@@ -93,10 +105,21 @@ def upgrade() -> None:
         sa.Column("vendor_name", sa.String(length=80), nullable=False),
         sa.Column("label", sa.String(length=120), nullable=False),
         sa.Column("status", sa.String(length=32), nullable=False, server_default="draft"),
-        sa.Column("config", postgresql.JSONB(astext_type=sa.Text()), nullable=False, server_default=sa.text("'{}'::jsonb")),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-        sa.UniqueConstraint("tenant_id", "provider_kind", "label", name="uq_provider_accounts_label"),
+        sa.Column(
+            "config",
+            postgresql.JSONB(astext_type=sa.Text()),
+            nullable=False,
+            server_default=sa.text("'{}'::jsonb"),
+        ),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+        ),
+        sa.UniqueConstraint(
+            "tenant_id", "provider_kind", "label", name="uq_provider_accounts_label"
+        ),
         schema=DATABASE_SCHEMA,
     )
     op.create_table(
@@ -117,9 +140,15 @@ def upgrade() -> None:
         sa.Column("agent_key", sa.String(length=80), nullable=False),
         sa.Column("name", sa.String(length=120), nullable=False),
         sa.Column("status", sa.String(length=32), nullable=False, server_default="draft"),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-        sa.UniqueConstraint("tenant_id", "agent_key", name="uq_agent_definitions_key"),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+        ),
+        sa.UniqueConstraint(
+            "tenant_id", "workspace_id", "agent_key", name="uq_agent_definitions_key"
+        ),
         schema=DATABASE_SCHEMA,
     )
     op.create_table(
@@ -133,11 +162,25 @@ def upgrade() -> None:
         ),
         sa.Column("version_number", sa.Integer(), nullable=False),
         sa.Column("pipeline_mode", sa.String(length=32), nullable=False),
-        sa.Column("routing_config", postgresql.JSONB(astext_type=sa.Text()), nullable=False, server_default=sa.text("'{}'::jsonb")),
-        sa.Column("vendor_config", postgresql.JSONB(astext_type=sa.Text()), nullable=False, server_default=sa.text("'{}'::jsonb")),
+        sa.Column(
+            "routing_config",
+            postgresql.JSONB(astext_type=sa.Text()),
+            nullable=False,
+            server_default=sa.text("'{}'::jsonb"),
+        ),
+        sa.Column(
+            "vendor_config",
+            postgresql.JSONB(astext_type=sa.Text()),
+            nullable=False,
+            server_default=sa.text("'{}'::jsonb"),
+        ),
         sa.Column("published_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-        sa.UniqueConstraint("agent_definition_id", "version_number", name="uq_agent_versions_number"),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+        ),
+        sa.UniqueConstraint(
+            "agent_definition_id", "version_number", name="uq_agent_versions_number"
+        ),
         schema=DATABASE_SCHEMA,
     )
     op.create_table(
@@ -165,10 +208,17 @@ def upgrade() -> None:
         sa.Column("status", sa.String(length=32), nullable=False),
         sa.Column("from_number", sa.String(length=32), nullable=True),
         sa.Column("to_number", sa.String(length=32), nullable=True),
-        sa.Column("resolved_config", postgresql.JSONB(astext_type=sa.Text()), nullable=False, server_default=sa.text("'{}'::jsonb")),
+        sa.Column(
+            "resolved_config",
+            postgresql.JSONB(astext_type=sa.Text()),
+            nullable=False,
+            server_default=sa.text("'{}'::jsonb"),
+        ),
         sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("ended_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+        ),
         schema=DATABASE_SCHEMA,
     )
     op.create_table(
@@ -187,9 +237,18 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("event_type", sa.String(length=64), nullable=False),
-        sa.Column("payload", postgresql.JSONB(astext_type=sa.Text()), nullable=False, server_default=sa.text("'{}'::jsonb")),
-        sa.Column("occurred_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column(
+            "payload",
+            postgresql.JSONB(astext_type=sa.Text()),
+            nullable=False,
+            server_default=sa.text("'{}'::jsonb"),
+        ),
+        sa.Column(
+            "occurred_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+        ),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+        ),
         schema=DATABASE_SCHEMA,
     )
 
@@ -199,7 +258,9 @@ def upgrade() -> None:
         ["tenant_id", "provider_kind"],
         schema=DATABASE_SCHEMA,
     )
-    op.create_index("ix_calls_tenant_created", "calls", ["tenant_id", "created_at"], schema=DATABASE_SCHEMA)
+    op.create_index(
+        "ix_calls_tenant_created", "calls", ["tenant_id", "created_at"], schema=DATABASE_SCHEMA
+    )
     op.create_index(
         "ix_call_events_call_occurred",
         "call_events",
@@ -211,7 +272,9 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index("ix_call_events_call_occurred", table_name="call_events", schema=DATABASE_SCHEMA)
     op.drop_index("ix_calls_tenant_created", table_name="calls", schema=DATABASE_SCHEMA)
-    op.drop_index("ix_provider_accounts_tenant_kind", table_name="provider_accounts", schema=DATABASE_SCHEMA)
+    op.drop_index(
+        "ix_provider_accounts_tenant_kind", table_name="provider_accounts", schema=DATABASE_SCHEMA
+    )
     op.drop_table("call_events", schema=DATABASE_SCHEMA)
     op.drop_table("calls", schema=DATABASE_SCHEMA)
     op.drop_table("agent_versions", schema=DATABASE_SCHEMA)

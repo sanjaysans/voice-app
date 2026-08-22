@@ -9,7 +9,9 @@ class Settings(BaseSettings):
     host: str = Field(default="0.0.0.0", validation_alias=AliasChoices("VOICE_JOBS_HOST"))
     port: int = Field(default=8102, validation_alias=AliasChoices("VOICE_JOBS_PORT"))
     log_level: str = Field(default="INFO", validation_alias=AliasChoices("VOICE_LOG_LEVEL"))
-    temporal_target: str = Field(default="localhost:7233", validation_alias=AliasChoices("VOICE_TEMPORAL_TARGET"))
+    temporal_target: str = Field(
+        default="localhost:7233", validation_alias=AliasChoices("VOICE_TEMPORAL_TARGET")
+    )
     temporal_namespace: str = Field(
         default="default",
         validation_alias=AliasChoices("VOICE_TEMPORAL_NAMESPACE"),

@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 import psycopg
 from fastapi import FastAPI, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from voice_backend.api import router as api_router
@@ -40,6 +41,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         title="Voice Backend",
         version="0.1.0",
         lifespan=lifespan,
+    )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=resolved_settings.cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
     configure_database(app, resolved_settings)
     app.include_router(api_router)

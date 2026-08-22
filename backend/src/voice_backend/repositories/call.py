@@ -51,10 +51,26 @@ class CallRepository:
         )
         return list(self.session.scalars(statement).unique())
 
+    def get_for_workspace(self, tenant_id, workspace_id, call_id) -> Call | None:
+        statement = (
+            select(Call)
+            .where(
+                Call.tenant_id == tenant_id,
+                Call.workspace_id == workspace_id,
+                Call.id == call_id,
+            )
+            .options(joinedload(Call.agent_version).joinedload(AgentVersion.agent_definition))
+        )
+        return self.session.scalar(statement)
+
     def count_active_by_tenant(self, tenant_id) -> int:
-        statement = select(func.count()).select_from(Call).where(
-            Call.tenant_id == tenant_id,
-            Call.status.in_(self.ACTIVE_STATUSES),
+        statement = (
+            select(func.count())
+            .select_from(Call)
+            .where(
+                Call.tenant_id == tenant_id,
+                Call.status.in_(self.ACTIVE_STATUSES),
+            )
         )
         return int(self.session.scalar(statement) or 0)
 
@@ -80,3 +96,27 @@ class CallRepository:
         call.status = status
         self.session.flush()
         return call
+
+    def update(
+        self,
+        call: Call,
+        *,
+        status: str | None = None,
+        resolved_config: dict[str, object] | None = None,
+        started_at=None,
+        ended_at=None,
+    ) -> Call:
+        if status is not None:
+            call.status = status
+        if resolved_config is not None:
+            call.resolved_config = resolved_config
+        if started_at is not None:
+            call.started_at = started_at
+        if ended_at is not None:
+            call.ended_at = ended_at
+        self.session.flush()
+        return call
+
+    def delete(self, call: Call) -> None:
+        self.session.delete(call)
+        self.session.flush()

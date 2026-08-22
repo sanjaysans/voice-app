@@ -10,7 +10,9 @@ class CallHistoryService:
         self.workspaces = WorkspaceRepository(session)
         self.calls = CallRepository(session)
 
-    def list_recent_calls(self, tenant_slug: str, workspace_id, limit: int = 20) -> list[CallSummary] | None:
+    def list_recent_calls(
+        self, tenant_slug: str, workspace_id, limit: int = 20
+    ) -> list[CallSummary] | None:
         tenant = self.tenants.get_by_slug(tenant_slug)
         if tenant is None:
             return None

@@ -9,7 +9,9 @@ from voice_jobs.config import Settings
 async def test_ready_endpoint_reports_temporal_connection_settings() -> None:
     async with AsyncClient(
         transport=ASGITransport(
-            app=create_app(Settings(temporal_target="temporal.local:7233", temporal_namespace="voice-dev"))
+            app=create_app(
+                Settings(temporal_target="temporal.local:7233", temporal_namespace="voice-dev")
+            )
         ),
         base_url="http://testserver",
     ) as client:

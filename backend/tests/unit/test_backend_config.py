@@ -4,13 +4,17 @@ from voice_backend.config import Settings
 
 
 def test_database_dsn_removes_sqlalchemy_driver_suffix() -> None:
-    settings = Settings(_env_file=None, database_url="postgresql+psycopg://voice:voice@localhost:5432/voice")
+    settings = Settings(
+        _env_file=None, database_url="postgresql+psycopg://voice:voice@localhost:5432/voice"
+    )
 
     assert settings.database_dsn == "postgresql://voice:voice@localhost:5432/voice"
 
 
 def test_database_dsn_leaves_plain_postgres_url_unchanged() -> None:
-    settings = Settings(_env_file=None, database_url="postgresql://voice:voice@localhost:5432/voice")
+    settings = Settings(
+        _env_file=None, database_url="postgresql://voice:voice@localhost:5432/voice"
+    )
 
     assert settings.database_dsn == "postgresql://voice:voice@localhost:5432/voice"
 

@@ -1,11 +1,22 @@
 {
   "name": "voice",
   "private": true,
-  "workspaces": ["mock_design"],
+  "workspaces": ["mock_design", "frontend"],
   "scripts": {
-    "dev": "npm --workspace mock_design run dev",
-    "build": "npm --workspace mock_design run build",
-    "start": "npm --workspace mock_design run start",
-    "check": "npm run build"
+    "dev": "npm --workspace frontend run dev",
+    "dev:frontend": "npm --workspace frontend run dev",
+    "dev:mock": "npm --workspace mock_design run dev",
+    "build": "npm --workspace frontend run build",
+    "build:frontend": "npm --workspace frontend run build",
+    "build:mock": "npm --workspace mock_design run build",
+    "start": "npm --workspace frontend run start",
+    "start:frontend": "npm --workspace frontend run start",
+    "test:frontend": "npm --workspace frontend run test",
+    "typecheck:frontend": "npm --workspace frontend run typecheck",
+    "test:e2e": "playwright test",
+    "check": "npm run typecheck:frontend && npm run test:frontend && npm run build"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0"
   }
 }

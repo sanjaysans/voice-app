@@ -24,7 +24,9 @@ class Tenant(Base):
     status: Mapped[str] = mapped_column(String(32), default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    workspaces: Mapped[list[Workspace]] = relationship(back_populates="tenant", cascade="all, delete-orphan")
+    workspaces: Mapped[list[Workspace]] = relationship(
+        back_populates="tenant", cascade="all, delete-orphan"
+    )
     agent_definitions: Mapped[list[AgentDefinition]] = relationship(back_populates="tenant")
     calls: Mapped[list[Call]] = relationship(back_populates="tenant")
 
@@ -40,14 +42,25 @@ class Workspace(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     tenant: Mapped[Tenant] = relationship(back_populates="workspaces")
-    agent_definitions: Mapped[list[AgentDefinition]] = relationship(back_populates="workspace")
-    calls: Mapped[list[Call]] = relationship(back_populates="workspace")
-    memberships: Mapped[list[TenantMembership]] = relationship(back_populates="workspace")
+    agent_definitions: Mapped[list[AgentDefinition]] = relationship(
+        back_populates="workspace",
+        cascade="all, delete-orphan",
+    )
+    calls: Mapped[list[Call]] = relationship(
+        back_populates="workspace",
+        cascade="all, delete-orphan",
+    )
+    memberships: Mapped[list[TenantMembership]] = relationship(
+        back_populates="workspace",
+        cascade="all, delete-orphan",
+    )
 
 
 class AgentDefinition(Base):
     __tablename__ = "agent_definitions"
-    __table_args__ = (UniqueConstraint("tenant_id", "agent_key", name="uq_agent_definitions_key"),)
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "workspace_id", "agent_key", name="uq_agent_definitions_key"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"))
@@ -112,7 +125,9 @@ class Call(Base):
     tenant: Mapped[Tenant] = relationship(back_populates="calls")
     workspace: Mapped[Workspace] = relationship(back_populates="calls")
     agent_version: Mapped[AgentVersion | None] = relationship(back_populates="calls")
-    events: Mapped[list[CallEvent]] = relationship(back_populates="call", cascade="all, delete-orphan")
+    events: Mapped[list[CallEvent]] = relationship(
+        back_populates="call", cascade="all, delete-orphan"
+    )
 
 
 class User(Base):
@@ -131,7 +146,9 @@ class User(Base):
 class TenantMembership(Base):
     __tablename__ = "tenant_memberships"
     __table_args__ = (
-        UniqueConstraint("tenant_id", "workspace_id", "user_id", name="uq_memberships_workspace_user"),
+        UniqueConstraint(
+            "tenant_id", "workspace_id", "user_id", name="uq_memberships_workspace_user"
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -175,7 +192,9 @@ class CallEvent(Base):
     tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"))
     event_type: Mapped[str] = mapped_column(String(64))
     payload: Mapped[dict[str, object]] = mapped_column(json_document_type, default=dict)
-    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     call: Mapped[Call] = relationship(back_populates="events")
