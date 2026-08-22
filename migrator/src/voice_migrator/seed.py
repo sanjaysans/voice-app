@@ -6,7 +6,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.dialects.postgresql import insert
 
 from voice_backend.models import Base
-from voice_backend.schema import build_engine_connect_args
+from voice_backend.schema import build_engine_connect_args, configure_engine
 from voice_migrator.config import get_settings
 from voice_migrator.logging import configure_logging, get_logger
 
@@ -65,6 +65,7 @@ def main() -> None:
         future=True,
         connect_args=build_engine_connect_args(settings.database_url),
     )
+    configure_engine(engine, settings.database_url)
 
     users_table = Base.metadata.tables["users"]
     tenants_table = Base.metadata.tables["tenants"]

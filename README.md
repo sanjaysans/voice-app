@@ -46,6 +46,7 @@ Local defaults after startup:
 - `VOICE_ENVIRONMENT=dev|test|prod` selects which database URL is active
 - `VOICE_DATABASE_URL` can override everything for one-off runs
 - `VOICE_DATABASE_URL_DEV`, `VOICE_DATABASE_URL_TEST`, and `VOICE_DATABASE_URL_PROD` hold your Supabase connection strings
+- for local development on typical IPv4 networks, prefer Supabase session-pooler URLs over direct `db.<ref>.supabase.co` URLs
 - `test` falls back to the `dev` database when its own URL is not set
 - `prod` still fails fast if its database URL is not configured
 - PostgreSQL connections automatically use the private `app_private` schema, so application tables stay out of Supabase's default `public` data API surface

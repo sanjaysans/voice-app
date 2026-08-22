@@ -6,13 +6,14 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from voice_backend.config import Settings, get_settings
-from voice_backend.schema import build_engine_connect_args
+from voice_backend.schema import build_engine_connect_args, configure_engine
 
 
 @lru_cache(maxsize=8)
 def _create_session_factory(database_url: str) -> sessionmaker[Session]:
     connect_args = build_engine_connect_args(database_url)
     engine = create_engine(database_url, future=True, pool_pre_ping=True, connect_args=connect_args)
+    configure_engine(engine, database_url)
     return sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 
 
