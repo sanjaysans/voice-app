@@ -6,9 +6,10 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   createActiveCall,
   createAgent,
@@ -37,6 +38,7 @@ import {
 import { Button } from "@/components/ui";
 
 type CallsView = "launch" | "live";
+type RouteDataScope = "light" | "providers" | "full";
 
 type MockAppContextValue = {
   currentUser: {
@@ -226,6 +228,26 @@ type SessionResponse = {
 };
 
 const MockAppContext = createContext<MockAppContextValue | null>(null);
+const routeDataScopeRank: Record<RouteDataScope, number> = {
+  light: 0,
+  providers: 1,
+  full: 2,
+};
+
+function getRouteDataScope(pathname: string): RouteDataScope {
+  if (
+    pathname === "/dashboard" ||
+    pathname.startsWith("/agents") ||
+    pathname.startsWith("/live") ||
+    pathname.startsWith("/compliance")
+  ) {
+    return "full";
+  }
+  if (pathname.startsWith("/connections")) {
+    return "providers";
+  }
+  return "light";
+}
 
 function agentKeyFromName(name: string) {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
@@ -382,6 +404,7 @@ function toCallRecord(response: CallResponse): CallRecord {
 
 export function MockAppProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
+  const pathname = usePathname();
   const [currentUser, setCurrentUser] = useState<MockAppContextValue["currentUser"]>(null);
   const [tenantSlug, setTenantSlug] = useState("");
   const [workspaceId, setWorkspaceId] = useState("");
@@ -400,7 +423,14 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [dateRange, setDateRange] = useState(dateRanges[1]);
   const [isReady, setIsReady] = useState(false);
+  const [isHydratingRouteData, setIsHydratingRouteData] = useState(false);
   const [bootstrapError, setBootstrapError] = useState("");
+  const hydratedScopeRef = useRef<{
+    tenantSlug: string;
+    workspaceId: string;
+    scope: RouteDataScope;
+  } | null>(null);
+  const routeDataScope = useMemo(() => getRouteDataScope(pathname), [pathname]);
 
   function applyProviderAccounts(nextProviderAccounts: ProviderAccountRecord[]) {
     setProviderAccounts(nextProviderAccounts);
@@ -506,6 +536,46 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
     applyProviderAccounts(accounts.map(toProviderAccount));
   }
 
+  function hasHydratedRouteData(
+    scope: RouteDataScope,
+    context: { tenantSlug: string; workspaceId: string }
+  ) {
+    const hydrated = hydratedScopeRef.current;
+    if (!hydrated) {
+      return scope === "light";
+    }
+    return (
+      hydrated.tenantSlug === context.tenantSlug &&
+      hydrated.workspaceId === context.workspaceId &&
+      routeDataScopeRank[hydrated.scope] >= routeDataScopeRank[scope]
+    );
+  }
+
+  async function hydrateRouteData(
+    scope: RouteDataScope,
+    context: { tenantSlug: string; workspaceId: string }
+  ) {
+    if (scope === "light") {
+      hydratedScopeRef.current = { ...context, scope };
+      return;
+    }
+    if (hasHydratedRouteData(scope, context)) {
+      return;
+    }
+
+    setIsHydratingRouteData(true);
+    try {
+      if (scope === "providers") {
+        await refreshProviderAccounts({ tenantSlug: context.tenantSlug });
+      } else {
+        await refreshState(context);
+      }
+      hydratedScopeRef.current = { ...context, scope };
+    } finally {
+      setIsHydratingRouteData(false);
+    }
+  }
+
   async function loadWorkspace(preferredWorkspaceId?: string) {
     const resolved = await resolveSession(preferredWorkspaceId);
     if (!resolved) {
@@ -519,6 +589,7 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
       setCallHistory([]);
       setSelectedAgentId("");
       setSelectedCallId("");
+      hydratedScopeRef.current = null;
       setBootstrapError("");
       setIsReady(true);
       return;
@@ -528,7 +599,7 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
     setTenantSlug(resolved.tenantSlug);
     setWorkspaceId(resolved.workspaceId);
     setWorkspaceName(resolved.workspaceName);
-    await refreshState({
+    await hydrateRouteData(routeDataScope, {
       tenantSlug: resolved.tenantSlug,
       workspaceId: resolved.workspaceId,
     });
@@ -551,6 +622,13 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
       }
     })();
   }, [router]);
+
+  useEffect(() => {
+    if (!isReady || !tenantSlug || !workspaceId) {
+      return;
+    }
+    void hydrateRouteData(routeDataScope, { tenantSlug, workspaceId });
+  }, [isReady, routeDataScope, tenantSlug, workspaceId]);
 
   useEffect(() => {
     if (!activeCall || !workspaceId) {
@@ -685,6 +763,10 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
 
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? agents[0] ?? null;
   const selectedCall = callHistory.find((call) => call.id === selectedCallId) ?? callHistory[0] ?? null;
+  const shouldBlockOnRouteData =
+    Boolean(tenantSlug && workspaceId) &&
+    routeDataScope !== "light" &&
+    !hasHydratedRouteData(routeDataScope, { tenantSlug, workspaceId });
 
   const value = useMemo<MockAppContextValue>(
     () => ({
@@ -988,7 +1070,7 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
     ]
   );
 
-  if (!isReady) {
+  if (!isReady || shouldBlockOnRouteData || isHydratingRouteData) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-canvas text-sm text-[#6D6D78]">
         Loading Voice...

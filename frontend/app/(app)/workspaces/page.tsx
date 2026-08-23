@@ -14,7 +14,7 @@ type WorkspaceRecord = {
 };
 
 export default function WorkspacesPage() {
-  const { tenantSlug, workspaceId, workspaceName, reloadWorkspaceContext } = useMockApp();
+  const { tenantSlug, workspaceId, workspaceOptions, reloadWorkspaceContext } = useMockApp();
   const [workspaces, setWorkspaces] = useState<WorkspaceRecord[]>([]);
   const [isOpen, setIsOpen] = useState(false);
   const [editingWorkspace, setEditingWorkspace] = useState<WorkspaceRecord | null>(null);
@@ -26,23 +26,16 @@ export default function WorkspacesPage() {
   const [pendingMessage, setPendingMessage] = useState<string | null>(null);
   const [workspaceToDelete, setWorkspaceToDelete] = useState<WorkspaceRecord | null>(null);
 
-  async function loadWorkspaces(options?: { showLoader?: boolean }) {
-    if (options?.showLoader) {
-      setIsLoading(true);
-    }
-
-    try {
-      setWorkspaces(await api(`/api/v1/tenants/${tenantSlug}/workspaces`));
-    } finally {
-      if (options?.showLoader) {
-        setIsLoading(false);
-      }
-    }
-  }
-
   useEffect(() => {
-    void loadWorkspaces({ showLoader: true });
-  }, [tenantSlug]);
+    setWorkspaces(
+      workspaceOptions.map((workspace) => ({
+        workspace_id: workspace.workspace_id,
+        name: workspace.name,
+        is_default: workspace.is_default,
+      }))
+    );
+    setIsLoading(false);
+  }, [workspaceOptions]);
 
   async function withPagePending<T>(message: string, action: () => Promise<T>) {
     setPendingMessage(message);
@@ -60,7 +53,7 @@ export default function WorkspacesPage() {
       body: JSON.stringify({ name, is_default: false }),
     });
     setName("");
-    await loadWorkspaces();
+    await reloadWorkspaceContext();
   }
 
   async function saveWorkspace() {
@@ -73,10 +66,7 @@ export default function WorkspacesPage() {
     });
     setEditingWorkspace(null);
     setName("");
-    await loadWorkspaces();
-    if (editingWorkspace.workspace_id === workspaceId) {
-      await reloadWorkspaceContext(editingWorkspace.workspace_id);
-    }
+    await reloadWorkspaceContext(editingWorkspace.workspace_id);
   }
 
   async function makeDefault(nextWorkspace: WorkspaceRecord) {
@@ -84,7 +74,6 @@ export default function WorkspacesPage() {
       method: "PATCH",
       body: JSON.stringify({ is_default: true }),
     });
-    await loadWorkspaces();
     await reloadWorkspaceContext(nextWorkspace.workspace_id);
   }
 
@@ -92,7 +81,6 @@ export default function WorkspacesPage() {
     await api(`/api/v1/tenants/${tenantSlug}/workspaces/${nextWorkspace.workspace_id}`, {
       method: "DELETE",
     });
-    await loadWorkspaces();
     await reloadWorkspaceContext();
   }
 

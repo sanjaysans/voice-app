@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from voice_backend.logging import get_logger
 from voice_backend.repositories import TenantRepository, WorkspaceRepository
 from voice_backend.schemas import WorkspaceCreateInput, WorkspaceRecord, WorkspaceUpdateInput
+from voice_backend.services.read_cache import clear_read_cache, get_read_cache, set_read_cache
 
 logger = get_logger(__name__)
 
@@ -23,13 +24,21 @@ class WorkspaceAdminService:
         self.workspaces = WorkspaceRepository(session)
 
     def list_workspaces(self, tenant_slug: str, *, tenant_id=None) -> list[WorkspaceRecord] | None:
+        cache_key = ("workspace.list", tenant_slug, str(tenant_id or ""))
+        cached = get_read_cache(cache_key)
+        if cached is not None:
+            return cached
+
         resolved_tenant_id = tenant_id
         if resolved_tenant_id is None:
             tenant = self.tenants.get_by_slug(tenant_slug)
             if tenant is None:
                 return None
             resolved_tenant_id = tenant.id
-        return [_to_record(workspace) for workspace in self.workspaces.list_by_tenant(resolved_tenant_id)]
+        return set_read_cache(
+            cache_key,
+            [_to_record(workspace) for workspace in self.workspaces.list_by_tenant(resolved_tenant_id)],
+        )
 
     def create_workspace(
         self, tenant_slug: str, payload: WorkspaceCreateInput
@@ -40,6 +49,7 @@ class WorkspaceAdminService:
         workspace = self.workspaces.create(tenant.id, payload.name, is_default=payload.is_default)
         if workspace.is_default:
             self.workspaces.clear_default_for_tenant(tenant.id, except_workspace_id=workspace.id)
+        clear_read_cache()
         logger.info("workspace.created", tenant_id=str(tenant.id), workspace_id=str(workspace.id))
         return _to_record(workspace)
 
@@ -67,6 +77,7 @@ class WorkspaceAdminService:
         )
         if updated.is_default:
             self.workspaces.clear_default_for_tenant(tenant.id, except_workspace_id=updated.id)
+        clear_read_cache()
         logger.info("workspace.updated", tenant_id=str(tenant.id), workspace_id=str(updated.id))
         return _to_record(updated)
 
@@ -83,5 +94,6 @@ class WorkspaceAdminService:
             remaining = self.workspaces.list_by_tenant(tenant.id)
             if remaining and not any(item.is_default for item in remaining):
                 self.workspaces.update(remaining[0], is_default=True)
+        clear_read_cache()
         logger.info("workspace.deleted", tenant_id=str(tenant.id), workspace_id=str(workspace.id))
         return True

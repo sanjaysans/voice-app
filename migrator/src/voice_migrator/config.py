@@ -38,6 +38,10 @@ class Settings(BaseSettings):
         default="voice-demo-password",
         validation_alias=AliasChoices("VOICE_ADMIN_PASSWORD", "VOICE_DEV_ADMIN_PASSWORD"),
     )
+    password_hash_iterations: int = Field(
+        default=150_000,
+        validation_alias=AliasChoices("VOICE_PASSWORD_HASH_ITERATIONS"),
+    )
     tenant_name: str = Field(
         default="Voice Demo Tenant",
         validation_alias=AliasChoices("VOICE_TENANT_NAME", "VOICE_DEV_TENANT_NAME"),
@@ -80,6 +84,8 @@ class Settings(BaseSettings):
             object.__setattr__(resolved, "seed_mode", "minimal")
         if resolved.environment == "prod" and resolved.admin_password == "voice-demo-password":
             raise ValueError("VOICE_ADMIN_PASSWORD must be configured for production seeding")
+        if resolved.environment != "prod" and resolved.password_hash_iterations == 150_000:
+            object.__setattr__(resolved, "password_hash_iterations", 1_000)
 
         return resolved
 

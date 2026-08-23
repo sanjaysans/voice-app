@@ -1,5 +1,5 @@
 from collections.abc import Callable
-from typing import Annotated, TypeVar
+from typing import Annotated, Literal, TypeVar
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
@@ -54,6 +54,7 @@ from voice_backend.services import (
     WorkspaceStateService,
 )
 from voice_backend.services.authentication import clear_session_cache
+from voice_backend.services.read_cache import clear_read_cache
 
 router = APIRouter(prefix="/api/v1")
 SessionDependency = Annotated[Session, Depends(get_request_session)]
@@ -66,6 +67,7 @@ def _execute_write(session: Session, operation: Callable[[], MutationResult]) ->
         result = operation()
         session.commit()
         clear_session_cache()
+        clear_read_cache()
         return result
     except IntegrityError as exc:
         session.rollback()
@@ -312,7 +314,11 @@ def list_team_members(
     auth: AuthDependency,
 ):
     require_workspace_admin_access(auth, tenant_slug, workspace_id)
-    members = TeamAdminService(session).list_members(tenant_slug, workspace_id)
+    members = TeamAdminService(session).list_members(
+        tenant_slug,
+        workspace_id,
+        tenant_id=_tenant_id_from_auth(auth, tenant_slug),
+    )
     if members is None:
         raise HTTPException(status_code=404, detail="workspace not found")
     return [item.model_dump() for item in members]
@@ -388,7 +394,11 @@ def list_workspace_agents(
     auth: AuthDependency,
 ):
     require_workspace_write_access(auth, tenant_slug, workspace_id)
-    summaries = AgentCatalogService(session).list_workspace_agents(tenant_slug, workspace_id)
+    summaries = AgentCatalogService(session).list_workspace_agents(
+        tenant_slug,
+        workspace_id,
+        tenant_id=_tenant_id_from_auth(auth, tenant_slug),
+    )
     if summaries is None:
         raise HTTPException(status_code=404, detail="workspace not found")
     return [item.model_dump() for item in summaries]
@@ -527,11 +537,42 @@ def list_recent_calls(
 ):
     require_workspace_write_access(auth, tenant_slug, workspace_id)
     summaries = CallHistoryService(session).list_recent_calls(
-        tenant_slug, workspace_id, limit=limit
+        tenant_slug,
+        workspace_id,
+        limit=limit,
+        tenant_id=_tenant_id_from_auth(auth, tenant_slug),
     )
     if summaries is None:
         raise HTTPException(status_code=404, detail="workspace not found")
     return [item.model_dump() for item in summaries]
+
+
+@router.get("/tenants/{tenant_slug}/workspaces/{workspace_id}/calls/logs")
+def list_call_logs(
+    tenant_slug: str,
+    workspace_id: UUID,
+    session: SessionDependency,
+    auth: AuthDependency,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=50),
+    status: Literal["Completed", "Follow-up", "Dropped"] | None = Query(default=None),
+    call_type: Literal["all", "production", "test"] = Query(default="all"),
+    query: str | None = Query(default=None, max_length=120),
+):
+    require_workspace_write_access(auth, tenant_slug, workspace_id)
+    response = CallHistoryService(session).list_call_logs(
+        tenant_slug,
+        workspace_id,
+        page=page,
+        page_size=page_size,
+        status=status,
+        call_type=call_type,
+        query=query,
+        tenant_id=_tenant_id_from_auth(auth, tenant_slug),
+    )
+    if response is None:
+        raise HTTPException(status_code=404, detail="workspace not found")
+    return response.model_dump()
 
 
 @router.post(

@@ -378,7 +378,7 @@ def main() -> None:
                 display_name=settings.admin_name,
                 password_hash=hash_password(
                     settings.admin_password,
-                    iterations=150_000,
+                    iterations=settings.password_hash_iterations,
                 ),
                 is_platform_admin=True,
             )
@@ -388,7 +388,7 @@ def main() -> None:
                     "display_name": settings.admin_name,
                     "password_hash": hash_password(
                         settings.admin_password,
-                        iterations=150_000,
+                        iterations=settings.password_hash_iterations,
                     ),
                     "is_platform_admin": True,
                 },

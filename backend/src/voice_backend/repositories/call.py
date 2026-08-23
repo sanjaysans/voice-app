@@ -1,7 +1,7 @@
 import uuid
 from typing import ClassVar
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import String, desc, func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from voice_backend.models import AgentVersion, Call
@@ -66,6 +66,81 @@ class CallRepository:
             .limit(limit)
         )
         return list(self.session.scalars(statement).unique())
+
+    def list_by_workspace(
+        self,
+        tenant_id,
+        workspace_id,
+        *,
+        include_tests: bool = True,
+        only_tests: bool = False,
+    ) -> list[Call]:
+        filters = [
+            Call.tenant_id == tenant_id,
+            Call.workspace_id == workspace_id,
+        ]
+        if only_tests:
+            filters.append(Call.is_test.is_(True))
+        elif not include_tests:
+            filters.append(Call.is_test.is_(False))
+
+        statement = (
+            select(Call)
+            .where(*filters)
+            .options(joinedload(Call.agent_version).joinedload(AgentVersion.agent_definition))
+            .order_by(desc(Call.created_at))
+        )
+        return list(self.session.scalars(statement).unique())
+
+    def list_call_logs_page(
+        self,
+        tenant_id,
+        workspace_id,
+        *,
+        page: int,
+        page_size: int,
+        status_label: str | None = None,
+        call_type: str = "all",
+        query: str | None = None,
+    ) -> tuple[list[Call], int]:
+        filters = [
+            Call.tenant_id == tenant_id,
+            Call.workspace_id == workspace_id,
+        ]
+
+        if call_type == "test":
+            filters.append(Call.is_test.is_(True))
+        elif call_type == "production":
+            filters.append(Call.is_test.is_(False))
+
+        if status_label is not None:
+            filters.append(Call.resolved_config["status_label"].as_string() == status_label)
+
+        if query:
+            needle = query.strip().lower()
+            if needle:
+                pattern = f"%{needle}%"
+                filters.append(
+                    or_(
+                        func.lower(func.coalesce(Call.from_number, "")).like(pattern),
+                        func.lower(func.coalesce(Call.to_number, "")).like(pattern),
+                        func.lower(func.cast(Call.resolved_config, String)).like(pattern),
+                    )
+                )
+
+        total_items = int(
+            self.session.scalar(select(func.count()).select_from(Call).where(*filters)) or 0
+        )
+        offset = max(page - 1, 0) * page_size
+        statement = (
+            select(Call)
+            .where(*filters)
+            .options(joinedload(Call.agent_version).joinedload(AgentVersion.agent_definition))
+            .order_by(desc(Call.created_at))
+            .offset(offset)
+            .limit(page_size)
+        )
+        return list(self.session.scalars(statement).unique()), total_items
 
     def get_for_workspace(self, tenant_id, workspace_id, call_id) -> Call | None:
         statement = (

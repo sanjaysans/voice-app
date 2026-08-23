@@ -40,9 +40,9 @@ const navSections = [
     label: "Overview",
     items: [
       { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-      { href: "/calls", label: "Calls", icon: Phone, soon: true },
-      { href: "/calls/logs", label: "Call logs", icon: ScrollText, soon: true },
+      { href: "/calls/logs", label: "Call logs", icon: ScrollText },
       { href: "/live", label: "Live", icon: Radio },
+      { href: "/calls", label: "Calls", icon: Phone, soon: true },
       { href: "/qa-review", label: "QA review", icon: Shield, soon: true },
       { href: "/analytics", label: "Analytics", icon: LineChart, soon: true }
     ] satisfies NavItem[]
@@ -80,6 +80,7 @@ function NavLink({ item, active }: { item: NavItem; active: boolean }) {
           : "text-[rgba(255,255,255,0.7)] hover:bg-[rgba(255,255,255,0.04)] hover:text-white"
       )}
       href={item.href}
+      prefetch={false}
     >
       <item.icon size={18} className={active ? "text-accent-soft" : undefined} />
       <span className="min-w-0 flex-1 truncate">{item.label}</span>
@@ -260,6 +261,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                         : "bg-white text-[#6D6D78]"
                     )}
                     href={item.href}
+                    prefetch={false}
                   >
                     {item.label}
                     {item.soon ? (

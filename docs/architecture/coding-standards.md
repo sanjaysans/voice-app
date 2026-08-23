@@ -71,6 +71,15 @@ Do not add comments for:
 - log boundary events, failures, and important state transitions
 - include correlation ids and domain ids whenever available
 
+## Backend API latency
+
+- every backend API should stay at or below `0.5s` local wall time on seeded data
+- new or materially changed backend endpoints must be profiled before completion
+- compare browser timings against the backend timing headers (`X-Process-Time-Ms` and `Server-Timing`) before assuming the handler itself is slow
+- use the seeded latency harness to verify regressions:
+  `uv run --project backend python backend/scripts/profile_api_latency.py`
+- if an endpoint depends on third-party I/O, keep vendor latency stubbed for the baseline profile and measure external latency separately
+
 ## Error handling
 
 1. Fail early on invalid configuration.

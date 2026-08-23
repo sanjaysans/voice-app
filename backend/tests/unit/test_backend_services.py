@@ -123,6 +123,47 @@ def test_call_history_service_returns_recent_calls_with_agent_name(session, seed
     assert calls[0].to_number == "+15550102"
 
 
+def test_call_history_service_filters_and_pages_call_logs(session, seeded_domain) -> None:
+    second_call = seeded_domain["second_call"]
+    second_call.is_test = True
+    second_call.resolved_config = {
+        "agent_name": "Lead Router",
+        "lead_name": "Test Caller",
+        "company": "Vegrow",
+        "phone": "+15550102",
+        "scenario_name": "Browser live test",
+        "status_label": "Completed",
+        "duration": "00:42",
+        "time": "Today",
+        "summary": "Completed browser validation run.",
+        "outcome": "Completed",
+        "next_step": "Review transcript.",
+        "vendor_trace": "Deepgram -> OpenAI -> Cartesia",
+        "synced_to_crm": False,
+        "extracted_variables": [],
+        "tool_calls": [],
+        "guardrails": [],
+        "transcript": [],
+    }
+    session.commit()
+
+    response = CallHistoryService(session).list_call_logs(
+        "voice-demo",
+        seeded_domain["workspace"].id,
+        page=1,
+        page_size=10,
+        status="Completed",
+        call_type="test",
+        query="browser",
+    )
+
+    assert response is not None
+    assert response.total_items == 1
+    assert response.total_pages == 1
+    assert response.items[0].is_test is True
+    assert response.items[0].scenario_name == "Browser live test"
+
+
 def test_tenant_overview_and_workspace_state_exclude_test_calls(session, seeded_domain) -> None:
     test_call = seeded_domain["second_call"]
     test_call.is_test = True

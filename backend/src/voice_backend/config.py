@@ -112,6 +112,8 @@ class Settings(BaseSettings):
             if resolved.environment == "prod":
                 raise ValueError("VOICE_SESSION_SECRET must be configured for production")
             object.__setattr__(resolved, "session_secret", "voice-local-dev-session-secret")
+        if resolved.environment != "prod" and resolved.password_hash_iterations == 150_000:
+            object.__setattr__(resolved, "password_hash_iterations", 1_000)
 
         livekit_url = resolved.livekit_url.strip() if isinstance(resolved.livekit_url, str) else None
         livekit_api_key = (

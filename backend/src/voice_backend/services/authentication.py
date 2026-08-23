@@ -28,12 +28,12 @@ class AuthenticationService:
             return None
         if not verify_password(password, user.password_hash):
             return None
-        return self._build_session(user.id, force_refresh=True)
+        return self._build_session(user.id, force_refresh=True, user=user)
 
     def get_session(self, user_id: UUID) -> SessionRecord | None:
         return self._build_session(user_id)
 
-    def _build_session(self, user_id: UUID, *, force_refresh: bool = False) -> SessionRecord | None:
+    def _build_session(self, user_id: UUID, *, force_refresh: bool = False, user=None) -> SessionRecord | None:
         if not force_refresh:
             cached = _SESSION_CACHE.get(user_id)
             if cached is not None:
@@ -42,7 +42,8 @@ class AuthenticationService:
                     return session_record.model_copy(deep=True)
                 _SESSION_CACHE.pop(user_id, None)
 
-        user = self.users.get_by_id(user_id)
+        if user is None:
+            user = self.users.get_by_id(user_id)
         if user is None:
             return None
 

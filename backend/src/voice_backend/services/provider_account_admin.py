@@ -10,6 +10,7 @@ from voice_backend.schemas import (
     ProviderAccountRecord,
     ProviderAccountUpdateInput,
 )
+from voice_backend.services.read_cache import clear_read_cache, get_read_cache, set_read_cache
 
 logger = get_logger(__name__)
 
@@ -227,13 +228,21 @@ class ProviderAccountAdminService:
         *,
         tenant_id=None,
     ) -> list[ProviderAccountRecord] | None:
+        cache_key = ("provider-account.list", tenant_slug, str(tenant_id or ""))
+        cached = get_read_cache(cache_key)
+        if cached is not None:
+            return cached
+
         resolved_tenant_id = tenant_id
         if resolved_tenant_id is None:
             tenant = self.tenants.get_by_slug(tenant_slug)
             if tenant is None:
                 return None
             resolved_tenant_id = tenant.id
-        return [_to_record(account) for account in self.accounts.list_by_tenant(resolved_tenant_id)]
+        return set_read_cache(
+            cache_key,
+            [_to_record(account) for account in self.accounts.list_by_tenant(resolved_tenant_id)],
+        )
 
     def create_account(
         self,
@@ -251,6 +260,7 @@ class ProviderAccountAdminService:
             status=payload.status,
             config=payload.config,
         )
+        clear_read_cache()
         logger.info(
             "provider_account.created",
             tenant_id=str(tenant.id),
@@ -285,6 +295,7 @@ class ProviderAccountAdminService:
             status=payload.status,
             config=payload.config,
         )
+        clear_read_cache()
         logger.info(
             "provider_account.updated",
             tenant_id=str(tenant.id),
@@ -302,6 +313,7 @@ class ProviderAccountAdminService:
 
         status, config_patch = _health_check_payload(account)
         updated = self.accounts.update(account, status=status, config=config_patch)
+        clear_read_cache()
         logger.info(
             "provider_account.health_check",
             tenant_id=str(tenant.id),
@@ -318,6 +330,7 @@ class ProviderAccountAdminService:
         if account is None:
             return False
         self.accounts.delete(account)
+        clear_read_cache()
         logger.info(
             "provider_account.deleted",
             tenant_id=str(tenant.id),

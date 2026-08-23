@@ -7,12 +7,13 @@ from voice_backend.repositories import AgentRepository, TenantRepository, Worksp
 from voice_backend.schemas import (
     AgentDefinitionCreateInput,
     AgentDefinitionRecord,
-    AgentStudioRecord,
     AgentDefinitionUpdateInput,
+    AgentStudioRecord,
     AgentStudioUpdateInput,
     AgentVersionCreateInput,
     AgentVersionRecord,
 )
+from voice_backend.services.read_cache import clear_read_cache, get_read_cache, set_read_cache
 
 logger = get_logger(__name__)
 
@@ -158,12 +159,18 @@ class AgentDefinitionAdminService:
                 routing_config=payload.initial_version.routing_config,
                 vendor_config=payload.initial_version.vendor_config,
             )
+        clear_read_cache()
         logger.info("agent_definition.created", tenant_id=str(tenant.id), agent_id=str(agent.id))
         return _to_record(
             self.agents.get_definition_for_workspace(tenant.id, workspace.id, agent.id)
         )
 
     def get_agent(self, tenant_slug: str, workspace_id, agent_id) -> AgentDefinitionRecord | None:
+        cache_key = ("agent-definition.get", tenant_slug, str(workspace_id), str(agent_id))
+        cached = get_read_cache(cache_key)
+        if cached is not None:
+            return cached
+
         tenant = self.tenants.get_by_slug(tenant_slug)
         if tenant is None:
             return None
@@ -171,7 +178,7 @@ class AgentDefinitionAdminService:
         if workspace is None:
             return None
         agent = self.agents.get_definition_for_workspace(tenant.id, workspace.id, agent_id)
-        return _to_record(agent) if agent is not None else None
+        return set_read_cache(cache_key, _to_record(agent) if agent is not None else None)
 
     def update_agent(
         self,
@@ -195,6 +202,7 @@ class AgentDefinitionAdminService:
             name=payload.name,
             status=payload.status,
         )
+        clear_read_cache()
         logger.info("agent_definition.updated", tenant_id=str(tenant.id), agent_id=str(updated.id))
         return _to_record(updated)
 
@@ -222,6 +230,7 @@ class AgentDefinitionAdminService:
             vendor_config=payload.vendor_config,
         )
         refreshed = self.agents.get_definition_for_workspace(tenant.id, workspace.id, agent.id)
+        clear_read_cache()
         logger.info("agent_version.created", tenant_id=str(tenant.id), agent_id=str(agent.id))
         return _to_record(refreshed)
 
@@ -291,6 +300,7 @@ class AgentDefinitionAdminService:
             published_at=published_at,
         )
         refreshed = self.agents.get_definition_for_workspace(tenant.id, workspace.id, agent.id)
+        clear_read_cache()
         logger.info("agent_definition.studio_updated", tenant_id=str(tenant.id), agent_id=str(agent.id))
         return _to_studio_record(refreshed)
 
@@ -305,5 +315,6 @@ class AgentDefinitionAdminService:
         if agent is None:
             return False
         self.agents.delete_definition(agent)
+        clear_read_cache()
         logger.info("agent_definition.deleted", tenant_id=str(tenant.id), agent_id=str(agent.id))
         return True

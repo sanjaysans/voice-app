@@ -20,6 +20,10 @@ Keep the control plane clean, typed, and independent from pipeline runtime detai
 3. Business rules should not depend on FastAPI objects.
 4. Persistence code should not leak directly into domain models.
 5. Tenant scoping should be explicit in every read and write path.
+6. Every new or materially changed API should clear the local seeded latency budget of `0.5s` or less.
+7. Run the backend latency harness before marking API work complete:
+   `uv run --project backend python backend/scripts/profile_api_latency.py`
+8. When browser timings look high, inspect `X-Process-Time-Ms` or `Server-Timing` first to separate backend handler time from frontend or network overhead.
 
 ## Avoid
 

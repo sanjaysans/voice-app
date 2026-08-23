@@ -293,6 +293,7 @@ class CallReviewRecord(BaseModel):
     call_id: UUID
     agent_id: UUID | None
     is_test: bool = False
+    direction: str = "outbound"
     agent_name: str
     lead_name: str
     company: str
@@ -311,6 +312,19 @@ class CallReviewRecord(BaseModel):
     tool_calls: list[dict[str, str]]
     guardrails: list[str]
     transcript: list[dict[str, str]]
+    created_at: datetime
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
+
+
+class CallLogListResponse(BaseModel):
+    items: list[CallReviewRecord]
+    page: int
+    page_size: int
+    total_items: int
+    total_pages: int
+    has_previous: bool
+    has_next: bool
 
 
 class LiveTestSessionEventInput(BaseModel):

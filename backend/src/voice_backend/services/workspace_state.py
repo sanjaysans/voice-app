@@ -19,6 +19,7 @@ from voice_backend.schemas import (
     WorkspaceRecord,
 )
 from voice_backend.services.provider_account_admin import to_provider_account_record
+from voice_backend.services.read_cache import get_read_cache, set_read_cache
 
 
 def _title_case_status(status: str) -> str:
@@ -146,6 +147,7 @@ def _build_call_record(call) -> CallReviewRecord:
         call_id=call.id,
         agent_id=agent.id if agent is not None else None,
         is_test=call.is_test,
+        direction=call.direction,
         agent_name=str(resolved.get("agent_name", agent.name if agent is not None else "Unknown")),
         lead_name=str(resolved.get("lead_name", "Unknown lead")),
         company=str(resolved.get("company", "Unknown company")),
@@ -164,6 +166,9 @@ def _build_call_record(call) -> CallReviewRecord:
         tool_calls=list(resolved.get("tool_calls", [])),
         guardrails=list(resolved.get("guardrails", [])),
         transcript=list(resolved.get("transcript", [])),
+        created_at=call.created_at,
+        started_at=call.started_at,
+        ended_at=call.ended_at,
     )
 
 
@@ -183,6 +188,16 @@ class WorkspaceStateService:
         tenant_id=None,
         workspace_membership: SessionMembershipRecord | None = None,
     ) -> WorkspaceAppState | None:
+        cache_key = (
+            "workspace-state.get",
+            tenant_slug,
+            str(workspace_id),
+            str(tenant_id or ""),
+        )
+        cached = get_read_cache(cache_key)
+        if cached is not None:
+            return cached
+
         resolved_tenant_id = tenant_id
         if resolved_tenant_id is None:
             tenant = self.tenants.get_by_slug(tenant_slug)
@@ -215,25 +230,29 @@ class WorkspaceStateService:
             to_provider_account_record(account) for account in provider_accounts
         ]
 
-        return WorkspaceAppState(
-            workspace=workspace_record,
-            agents=[
-                _build_agent_record(agent)
-                for agent in self.agents.list_by_workspace(resolved_tenant_id, workspace_id)
-            ],
-            connections=[
-                _build_connection_record(account)
-                for account in provider_accounts
-                if _connection_category(account.provider_kind) in {"Telephony", "CRM", "Calendar", "Knowledge"}
-            ],
-            provider_accounts=provider_account_records,
-            calls=[
-                _build_call_record(call)
-                for call in self.calls.list_recent_by_workspace(
-                    resolved_tenant_id,
-                    workspace_id,
-                    limit=100,
-                    include_tests=False,
-                )
-            ],
+        return set_read_cache(
+            cache_key,
+            WorkspaceAppState(
+                workspace=workspace_record,
+                agents=[
+                    _build_agent_record(agent)
+                    for agent in self.agents.list_by_workspace(resolved_tenant_id, workspace_id)
+                ],
+                connections=[
+                    _build_connection_record(account)
+                    for account in provider_accounts
+                    if _connection_category(account.provider_kind)
+                    in {"Telephony", "CRM", "Calendar", "Knowledge"}
+                ],
+                provider_accounts=provider_account_records,
+                calls=[
+                    _build_call_record(call)
+                    for call in self.calls.list_recent_by_workspace(
+                        resolved_tenant_id,
+                        workspace_id,
+                        limit=100,
+                        include_tests=False,
+                    )
+                ],
+            ),
         )

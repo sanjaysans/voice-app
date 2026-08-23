@@ -2,6 +2,7 @@ from sqlalchemy.orm import Session
 
 from voice_backend.repositories import AgentRepository, TenantRepository, WorkspaceRepository
 from voice_backend.schemas import AgentSummary
+from voice_backend.services.read_cache import get_read_cache, set_read_cache
 
 
 class AgentCatalogService:
@@ -10,16 +11,30 @@ class AgentCatalogService:
         self.workspaces = WorkspaceRepository(session)
         self.agents = AgentRepository(session)
 
-    def list_workspace_agents(self, tenant_slug: str, workspace_id) -> list[AgentSummary] | None:
-        tenant = self.tenants.get_by_slug(tenant_slug)
-        if tenant is None:
-            return None
-        workspace = self.workspaces.get_for_tenant(tenant.id, workspace_id)
+    def list_workspace_agents(
+        self,
+        tenant_slug: str,
+        workspace_id,
+        *,
+        tenant_id=None,
+    ) -> list[AgentSummary] | None:
+        cache_key = ("agent-catalog.list", tenant_slug, str(workspace_id), str(tenant_id or ""))
+        cached = get_read_cache(cache_key)
+        if cached is not None:
+            return cached
+
+        resolved_tenant_id = tenant_id
+        if resolved_tenant_id is None:
+            tenant = self.tenants.get_by_slug(tenant_slug)
+            if tenant is None:
+                return None
+            resolved_tenant_id = tenant.id
+        workspace = self.workspaces.get_for_tenant(resolved_tenant_id, workspace_id)
         if workspace is None:
             return None
 
         items: list[AgentSummary] = []
-        for agent in self.agents.list_by_workspace(tenant.id, workspace_id):
+        for agent in self.agents.list_by_workspace(resolved_tenant_id, workspace_id):
             latest_version = agent.versions[-1] if agent.versions else None
             items.append(
                 AgentSummary(
@@ -32,4 +47,4 @@ class AgentCatalogService:
                     latest_pipeline_mode=latest_version.pipeline_mode if latest_version else None,
                 )
             )
-        return items
+        return set_read_cache(cache_key, items)

@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from time import perf_counter
 
 import psycopg
 from fastapi import FastAPI, status
@@ -52,6 +53,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = resolved_settings
     configure_database(app, resolved_settings)
     app.include_router(api_router)
+
+    @app.middleware("http")
+    async def add_request_timing(request, call_next):
+        started_at = perf_counter()
+        response = await call_next(request)
+        duration_ms = (perf_counter() - started_at) * 1000
+        duration_label = f"{duration_ms:.2f}"
+        response.headers["X-Process-Time-Ms"] = duration_label
+        response.headers["Server-Timing"] = f'app;dur={duration_label}'
+        if request.url.path.startswith("/api/"):
+            logger.info(
+                "backend.request.completed",
+                method=request.method,
+                path=request.url.path,
+                status_code=response.status_code,
+                duration_ms=round(duration_ms, 2),
+            )
+        return response
 
     @app.get("/health")
     async def health() -> dict[str, str]:

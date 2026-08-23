@@ -7,6 +7,7 @@ from voice_backend.repositories import (
     WorkspaceRepository,
 )
 from voice_backend.schemas import TeamMemberCreateInput, TeamMemberRecord, TeamMemberUpdateInput
+from voice_backend.services.read_cache import clear_read_cache, get_read_cache, set_read_cache
 
 
 def _to_record(membership) -> TeamMemberRecord:
@@ -28,17 +29,35 @@ class TeamAdminService:
         self.users = UserRepository(session)
         self.memberships = MembershipRepository(session)
 
-    def list_members(self, tenant_slug: str, workspace_id) -> list[TeamMemberRecord] | None:
-        tenant = self.tenants.get_by_slug(tenant_slug)
-        if tenant is None:
-            return None
-        workspace = self.workspaces.get_for_tenant(tenant.id, workspace_id)
+    def list_members(
+        self,
+        tenant_slug: str,
+        workspace_id,
+        *,
+        tenant_id=None,
+    ) -> list[TeamMemberRecord] | None:
+        cache_key = ("team-members.list", tenant_slug, str(workspace_id), str(tenant_id or ""))
+        cached = get_read_cache(cache_key)
+        if cached is not None:
+            return cached
+
+        resolved_tenant_id = tenant_id
+        if resolved_tenant_id is None:
+            tenant = self.tenants.get_by_slug(tenant_slug)
+            if tenant is None:
+                return None
+            resolved_tenant_id = tenant.id
+
+        workspace = self.workspaces.get_for_tenant(resolved_tenant_id, workspace_id)
         if workspace is None:
             return None
-        return [
-            _to_record(item)
-            for item in self.memberships.list_by_workspace(tenant.id, workspace.id)
-        ]
+        return set_read_cache(
+            cache_key,
+            [
+                _to_record(item)
+                for item in self.memberships.list_by_workspace(resolved_tenant_id, workspace.id)
+            ],
+        )
 
     def create_member(
         self,
@@ -59,6 +78,7 @@ class TeamAdminService:
             self.users.update(user, display_name=payload.display_name)
         membership = self.memberships.create(tenant.id, workspace.id, user.id, payload.role)
         membership = self.memberships.get_for_workspace(tenant.id, workspace.id, membership.id)
+        clear_read_cache()
         return _to_record(membership)
 
     def update_member(
@@ -80,6 +100,7 @@ class TeamAdminService:
         self.memberships.update(membership, role=payload.role)
         self.users.update(membership.user, display_name=payload.display_name)
         membership = self.memberships.get_for_workspace(tenant.id, workspace.id, membership.id)
+        clear_read_cache()
         return _to_record(membership)
 
     def delete_member(self, tenant_slug: str, workspace_id, membership_id) -> bool:
@@ -93,4 +114,5 @@ class TeamAdminService:
         if membership is None:
             return False
         self.memberships.delete(membership)
+        clear_read_cache()
         return True

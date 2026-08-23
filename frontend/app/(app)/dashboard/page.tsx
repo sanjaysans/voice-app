@@ -162,7 +162,7 @@ export default function DashboardPage() {
               <h2 className="text-lg font-semibold">Recent call reviews</h2>
               <p className="mt-1 text-sm text-[#6D6D78]">Click any call to jump into the review surface.</p>
             </div>
-            <Link className="text-sm font-medium text-accent" href="/calls/logs">
+            <Link className="text-sm font-medium text-accent" href="/calls/logs" prefetch={false}>
               Open call logs
             </Link>
           </div>

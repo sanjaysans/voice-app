@@ -11,6 +11,8 @@ json_document_type = JSON().with_variant(postgresql.JSONB(astext_type=Text()), "
 def build_engine_connect_args(database_url: str) -> dict[str, object]:
     if database_url.startswith("sqlite"):
         return {"check_same_thread": False}
+    if database_url.startswith("postgresql"):
+        return {"options": f"-csearch_path={POSTGRES_SEARCH_PATH}"}
     return {}
 
 

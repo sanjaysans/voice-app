@@ -2,7 +2,7 @@ UV ?= uv
 COMPOSE ?= docker compose
 ENV ?= dev
 
-.PHONY: setup node-setup infra-up infra-down infra-logs temporal-dev db-migrate db-seed db-verify backend pipeline pipeline-worker jobs mock livekit dev-up dev-down dev-status lint format test verify dev help
+.PHONY: setup node-setup infra-up infra-down infra-logs temporal-dev db-migrate db-seed db-verify backend pipeline pipeline-worker jobs mock livekit dev-up dev-down dev-status lint format test verify profile-backend dev help
 
 help:
 	@echo "Available targets:"
@@ -27,6 +27,7 @@ help:
 	@echo "  make format       - run Ruff formatting"
 	@echo "  make test         - run pytest"
 	@echo "  make verify       - run lint and tests together"
+	@echo "  make profile-backend - run the seeded backend API latency profile"
 	@echo "  make dev          - print the recommended local startup order"
 
 setup:
@@ -95,6 +96,9 @@ test:
 verify:
 	$(MAKE) lint
 	$(MAKE) test
+
+profile-backend:
+	$(UV) run --project backend python backend/scripts/profile_api_latency.py
 
 dev:
 	@echo "Recommended local startup:"

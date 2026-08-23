@@ -167,6 +167,55 @@ async def test_recent_calls_endpoint_applies_limit(session, seeded_domain, auth_
 
 
 @pytest.mark.asyncio
+async def test_call_logs_endpoint_supports_filters_and_pagination(
+    session, seeded_domain, auth_context
+) -> None:
+    second_call = seeded_domain["second_call"]
+    second_call.is_test = True
+    second_call.resolved_config = {
+        "agent_name": "Lead Router",
+        "lead_name": "Test Caller",
+        "company": "Vegrow",
+        "phone": "+15550102",
+        "scenario_name": "Browser live test",
+        "status_label": "Completed",
+        "duration": "00:42",
+        "time": "Today",
+        "summary": "Completed browser validation run.",
+        "outcome": "Completed",
+        "next_step": "Review transcript.",
+        "vendor_trace": "Deepgram -> OpenAI -> Cartesia",
+        "synced_to_crm": False,
+        "extracted_variables": [],
+        "tool_calls": [],
+        "guardrails": [],
+        "transcript": [],
+    }
+    session.commit()
+
+    app = build_test_app(session, auth_context)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.get(
+            f"/api/v1/tenants/voice-demo/workspaces/{seeded_domain['workspace'].id}/calls/logs",
+            params={
+                "page": 1,
+                "page_size": 10,
+                "status": "Completed",
+                "call_type": "test",
+                "query": "browser",
+            },
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["total_items"] == 1
+        assert payload["items"][0]["is_test"] is True
+        assert payload["items"][0]["scenario_name"] == "Browser live test"
+
+
+@pytest.mark.asyncio
 async def test_agent_definition_endpoints_create_update_and_version(
     session, seeded_domain, auth_context
 ) -> None:

@@ -3,7 +3,17 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint, false, func
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+    false,
+    func,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from voice_backend.schema import json_document_type
@@ -105,6 +115,16 @@ class AgentVersion(Base):
 
 class Call(Base):
     __tablename__ = "calls"
+    __table_args__ = (
+        Index("ix_calls_tenant_workspace_created", "tenant_id", "workspace_id", "created_at"),
+        Index(
+            "ix_calls_tenant_workspace_test_created",
+            "tenant_id",
+            "workspace_id",
+            "is_test",
+            "created_at",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"))
@@ -200,6 +220,5 @@ class CallEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     call: Mapped[Call] = relationship(back_populates="events")
-
 
 Index("ix_calls_tenant_created", Call.tenant_id, Call.created_at)
