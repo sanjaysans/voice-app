@@ -15,7 +15,6 @@ import {
   Phone,
   Puzzle,
   Radio,
-  Route,
   ScrollText,
   Shield,
   Sparkles,
@@ -41,8 +40,8 @@ const navSections = [
     label: "Overview",
     items: [
       { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-      { href: "/calls", label: "Calls", icon: Phone },
-      { href: "/calls/logs", label: "Call logs", icon: ScrollText },
+      { href: "/calls", label: "Calls", icon: Phone, soon: true },
+      { href: "/calls/logs", label: "Call logs", icon: ScrollText, soon: true },
       { href: "/live", label: "Live", icon: Radio },
       { href: "/qa-review", label: "QA review", icon: Shield, soon: true },
       { href: "/analytics", label: "Analytics", icon: LineChart, soon: true }
@@ -52,7 +51,6 @@ const navSections = [
     label: "Build",
     items: [
       { href: "/agents", label: "Agents", icon: Mic },
-      { href: "/prompts", label: "Prompts", icon: Route, soon: true },
       { href: "/knowledge-base", label: "Knowledge", icon: FolderKanban, soon: true },
       { href: "/tools", label: "Tools", icon: Puzzle, soon: true },
       { href: "/releases", label: "Releases", icon: Sparkles, soon: true },

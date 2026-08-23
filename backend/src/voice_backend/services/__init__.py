@@ -3,6 +3,7 @@ from voice_backend.services.agent_definition_admin import AgentDefinitionAdminSe
 from voice_backend.services.authentication import AuthenticationService
 from voice_backend.services.call_history import CallHistoryService
 from voice_backend.services.call_review import CallReviewService
+from voice_backend.services.live_test_session import LiveTestSessionService
 from voice_backend.services.provider_account_admin import ProviderAccountAdminService
 from voice_backend.services.realtime_session import RealtimeSessionError, RealtimeSessionService
 from voice_backend.services.team_admin import TeamAdminService
@@ -17,6 +18,7 @@ __all__ = [
     "AuthenticationService",
     "CallHistoryService",
     "CallReviewService",
+    "LiveTestSessionService",
     "ProviderAccountAdminService",
     "RealtimeSessionError",
     "RealtimeSessionService",

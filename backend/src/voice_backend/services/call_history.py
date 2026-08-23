@@ -32,6 +32,7 @@ class CallHistoryService:
                     agent_name=agent_name,
                     direction=call.direction,
                     status=call.status,
+                    is_test=call.is_test,
                     from_number=call.from_number,
                     to_number=call.to_number,
                     started_at=call.started_at,

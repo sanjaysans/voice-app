@@ -25,6 +25,7 @@ from voice_backend.schemas import (
     BrowserRtcSessionCreateInput,
     CallReviewCreateInput,
     CallReviewUpdateInput,
+    LiveTestSessionUpdateInput,
     LoginInput,
     ProviderAccountCreateInput,
     ProviderAccountUpdateInput,
@@ -42,6 +43,7 @@ from voice_backend.services import (
     AuthenticationService,
     CallHistoryService,
     CallReviewService,
+    LiveTestSessionService,
     ProviderAccountAdminService,
     RealtimeSessionError,
     RealtimeSessionService,
@@ -544,7 +546,7 @@ async def create_browser_rtc_session(
     session: SessionDependency,
     auth: AuthDependency,
 ):
-    require_workspace_access(auth, tenant_slug, workspace_id)
+    require_workspace_write_access(auth, tenant_slug, workspace_id)
     workspace = WorkspaceAdminService(session).get_workspace(tenant_slug, workspace_id)
     if workspace is None:
         raise HTTPException(status_code=404, detail="workspace not found")
@@ -556,7 +558,41 @@ async def create_browser_rtc_session(
         )
     except RealtimeSessionError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    live_record = _execute_write(
+        session,
+        lambda: LiveTestSessionService(session).create_session_record(
+            tenant_slug,
+            workspace_id,
+            payload,
+            created,
+            launched_by=auth.email,
+        ),
+    )
+    if live_record is None:
+        raise HTTPException(status_code=404, detail="live test agent not found")
+    created.call_id = live_record.call_id
     return created.model_dump()
+
+
+@router.patch("/tenants/{tenant_slug}/workspaces/{workspace_id}/live/sessions/{call_id}")
+def update_live_test_session(
+    tenant_slug: str,
+    workspace_id: UUID,
+    call_id: UUID,
+    payload: LiveTestSessionUpdateInput,
+    session: SessionDependency,
+    auth: AuthDependency,
+):
+    require_workspace_write_access(auth, tenant_slug, workspace_id)
+    updated = _execute_write(
+        session,
+        lambda: LiveTestSessionService(session).update_session_record(
+            tenant_slug, workspace_id, call_id, payload
+        ),
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail="live test session not found")
+    return updated.model_dump()
 
 
 @router.post(

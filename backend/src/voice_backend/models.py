@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint, false, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from voice_backend.schema import json_document_type
@@ -115,6 +115,7 @@ class Call(Base):
     )
     direction: Mapped[str] = mapped_column(String(16))
     status: Mapped[str] = mapped_column(String(32))
+    is_test: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     from_number: Mapped[str | None] = mapped_column(String(32), nullable=True)
     to_number: Mapped[str | None] = mapped_column(String(32), nullable=True)
     resolved_config: Mapped[dict[str, object]] = mapped_column(json_document_type, default=dict)

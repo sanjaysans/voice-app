@@ -31,6 +31,6 @@ class TenantOverviewService:
             tenant_name=tenant.name,
             workspace_count=len(workspaces),
             agent_count=agent_count,
-            active_call_count=self.calls.count_active_by_tenant(tenant.id),
-            total_call_count=self.calls.count_all_by_tenant(tenant.id),
+            active_call_count=self.calls.count_active_by_tenant(tenant.id, include_tests=False),
+            total_call_count=self.calls.count_all_by_tenant(tenant.id, include_tests=False),
         )

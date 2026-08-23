@@ -78,6 +78,7 @@ class CallSummary(BaseModel):
     agent_name: str | None
     direction: str
     status: str
+    is_test: bool = False
     from_number: str | None
     to_number: str | None
     started_at: datetime | None
@@ -291,6 +292,7 @@ class ConnectionRecord(BaseModel):
 class CallReviewRecord(BaseModel):
     call_id: UUID
     agent_id: UUID | None
+    is_test: bool = False
     agent_name: str
     lead_name: str
     company: str
@@ -309,6 +311,39 @@ class CallReviewRecord(BaseModel):
     tool_calls: list[dict[str, str]]
     guardrails: list[str]
     transcript: list[dict[str, str]]
+
+
+class LiveTestSessionEventInput(BaseModel):
+    event_type: str
+    message: str
+    occurred_at: datetime | None = None
+    payload: dict[str, object] = Field(default_factory=dict)
+
+
+class LiveTestSessionRecord(BaseModel):
+    call_id: UUID
+    agent_id: UUID | None
+    agent_name: str
+    is_test: bool = True
+    lifecycle_status: Literal["queued", "in_progress", "completed", "failed", "cancelled"]
+    room_name: str
+    dispatch_id: str
+    participant_identity: str
+    participant_name: str
+    vendor_trace: str
+    summary: str
+    outcome: str
+    next_step: str
+    synced_to_crm: bool
+    transcript: list[dict[str, str]]
+    extracted_variables: list[dict[str, str]]
+    tool_calls: list[dict[str, str]]
+    guardrails: list[str]
+    metrics: dict[str, object] = Field(default_factory=dict)
+    event_log: list[dict[str, object]] = Field(default_factory=list)
+    started_at: datetime | None
+    ended_at: datetime | None
+    created_at: datetime
 
 
 class CallReviewCreateInput(BaseModel):
@@ -334,6 +369,23 @@ class CallReviewUpdateInput(BaseModel):
     synced_to_crm: bool | None = None
     next_step: str | None = None
     status: Literal["Completed", "Follow-up", "Dropped"] | None = None
+
+
+class LiveTestSessionUpdateInput(BaseModel):
+    lifecycle_status: Literal["queued", "in_progress", "completed", "failed", "cancelled"] | None = None
+    display_status: Literal["Completed", "Follow-up", "Dropped"] | None = None
+    summary: str | None = None
+    outcome: str | None = None
+    next_step: str | None = None
+    synced_to_crm: bool | None = None
+    transcript: list[dict[str, str]] | None = None
+    extracted_variables: list[dict[str, str]] | None = None
+    tool_calls: list[dict[str, str]] | None = None
+    guardrails: list[str] | None = None
+    metrics: dict[str, object] | None = None
+    append_events: list[LiveTestSessionEventInput] = Field(default_factory=list)
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
 
 
 class WorkspaceAppState(BaseModel):
@@ -415,6 +467,7 @@ class BrowserRtcVadInput(BaseModel):
 
 
 class BrowserRtcSessionCreateInput(BaseModel):
+    agent_id: UUID
     session_id: str | None = None
     pipeline_mode: PipelineMode = "stt_llm_tts"
     dispatch_agent_name: str = "voice-router-agent"
@@ -429,6 +482,7 @@ class BrowserRtcSessionCreateInput(BaseModel):
 
 
 class BrowserRtcSessionRecord(BaseModel):
+    call_id: UUID | None = None
     room_name: str
     participant_identity: str
     participant_name: str

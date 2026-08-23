@@ -416,8 +416,11 @@ async def test_browser_rtc_session_endpoint_returns_join_credentials(
             assert display_name == auth_context.display_name
 
             class StubRecord:
+                call_id = None
+
                 def model_dump(self):
                     return {
+                        "call_id": self.call_id,
                         "room_name": "voice-room-local",
                         "participant_identity": "web-demo-user",
                         "participant_name": display_name,
@@ -441,6 +444,7 @@ async def test_browser_rtc_session_endpoint_returns_join_credentials(
         response = await client.post(
             f"/api/v1/tenants/voice-demo/workspaces/{seeded_domain['workspace'].id}/live/sessions",
             json={
+                "agent_id": str(seeded_domain["agent"].id),
                 "dispatch_agent_name": "voice-router-agent",
                 "stt": {"api_key": "dg-key"},
                 "llm": {"api_key": "oa-key"},
@@ -451,6 +455,7 @@ async def test_browser_rtc_session_endpoint_returns_join_credentials(
         assert response.status_code == 201
         assert response.json()["room_name"] == "voice-room-local"
         assert response.json()["dispatch_agent_name"] == "voice-router-agent"
+        assert response.json()["call_id"] is not None
 
 
 @pytest.mark.asyncio

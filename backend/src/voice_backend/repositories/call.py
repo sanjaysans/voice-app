@@ -19,6 +19,7 @@ class CallRepository:
         workspace_id,
         direction: str,
         status: str,
+        is_test: bool = False,
         agent_version_id=None,
         from_number: str | None = None,
         to_number: str | None = None,
@@ -30,6 +31,7 @@ class CallRepository:
             agent_version_id=agent_version_id,
             direction=direction,
             status=status,
+            is_test=is_test,
             from_number=from_number,
             to_number=to_number,
             resolved_config=resolved_config or {},
@@ -38,13 +40,27 @@ class CallRepository:
         self.session.flush()
         return call
 
-    def list_recent_by_workspace(self, tenant_id, workspace_id, limit: int = 20) -> list[Call]:
+    def list_recent_by_workspace(
+        self,
+        tenant_id,
+        workspace_id,
+        limit: int = 20,
+        *,
+        include_tests: bool = False,
+        only_tests: bool = False,
+    ) -> list[Call]:
+        filters = [
+            Call.tenant_id == tenant_id,
+            Call.workspace_id == workspace_id,
+        ]
+        if only_tests:
+            filters.append(Call.is_test.is_(True))
+        elif not include_tests:
+            filters.append(Call.is_test.is_(False))
+
         statement = (
             select(Call)
-            .where(
-                Call.tenant_id == tenant_id,
-                Call.workspace_id == workspace_id,
-            )
+            .where(*filters)
             .options(joinedload(Call.agent_version).joinedload(AgentVersion.agent_definition))
             .order_by(desc(Call.created_at))
             .limit(limit)
@@ -63,19 +79,25 @@ class CallRepository:
         )
         return self.session.scalar(statement)
 
-    def count_active_by_tenant(self, tenant_id) -> int:
+    def count_active_by_tenant(self, tenant_id, *, include_tests: bool = False) -> int:
+        filters = [
+            Call.tenant_id == tenant_id,
+            Call.status.in_(self.ACTIVE_STATUSES),
+        ]
+        if not include_tests:
+            filters.append(Call.is_test.is_(False))
         statement = (
             select(func.count())
             .select_from(Call)
-            .where(
-                Call.tenant_id == tenant_id,
-                Call.status.in_(self.ACTIVE_STATUSES),
-            )
+            .where(*filters)
         )
         return int(self.session.scalar(statement) or 0)
 
-    def count_all_by_tenant(self, tenant_id) -> int:
-        statement = select(func.count()).select_from(Call).where(Call.tenant_id == tenant_id)
+    def count_all_by_tenant(self, tenant_id, *, include_tests: bool = False) -> int:
+        filters = [Call.tenant_id == tenant_id]
+        if not include_tests:
+            filters.append(Call.is_test.is_(False))
+        statement = select(func.count()).select_from(Call).where(*filters)
         return int(self.session.scalar(statement) or 0)
 
     def update_status(self, tenant_id, call_id, status: str) -> Call | None:

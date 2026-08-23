@@ -145,6 +145,7 @@ def _build_call_record(call) -> CallReviewRecord:
     return CallReviewRecord(
         call_id=call.id,
         agent_id=agent.id if agent is not None else None,
+        is_test=call.is_test,
         agent_name=str(resolved.get("agent_name", agent.name if agent is not None else "Unknown")),
         lead_name=str(resolved.get("lead_name", "Unknown lead")),
         company=str(resolved.get("company", "Unknown company")),
@@ -228,6 +229,11 @@ class WorkspaceStateService:
             provider_accounts=provider_account_records,
             calls=[
                 _build_call_record(call)
-                for call in self.calls.list_recent_by_workspace(resolved_tenant_id, workspace_id, limit=100)
+                for call in self.calls.list_recent_by_workspace(
+                    resolved_tenant_id,
+                    workspace_id,
+                    limit=100,
+                    include_tests=False,
+                )
             ],
         )

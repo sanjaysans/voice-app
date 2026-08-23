@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import LivePage from "@/app/(app)/live/page";
@@ -7,6 +7,7 @@ import { buildDefaultRuntimeProfile } from "@/lib/voice-stack";
 
 const mockUseMockApp = vi.fn();
 const mockCreateBrowserRtcSession = vi.fn();
+const mockUpdateLiveTestSession = vi.fn();
 
 vi.mock("@/lib/mock-app", () => ({
   useMockApp: () => mockUseMockApp(),
@@ -14,19 +15,25 @@ vi.mock("@/lib/mock-app", () => ({
 
 vi.mock("@/lib/live-session", () => ({
   createBrowserRtcSession: (...args: unknown[]) => mockCreateBrowserRtcSession(...args),
+  updateLiveTestSession: (...args: unknown[]) => mockUpdateLiveTestSession(...args),
 }));
 
 vi.mock("livekit-client", () => ({
   Room: class {
+    handlers: Record<string, Array<(...args: unknown[]) => void>> = {};
+
     localParticipant = {
+      identity: "web-user-1",
       setMicrophoneEnabled: vi.fn(async () => undefined),
     };
 
-    on() {
+    on(event: string, handler: (...args: unknown[]) => void) {
+      this.handlers[event] = [...(this.handlers[event] || []), handler];
       return this;
     }
 
     async connect() {
+      this.handlers.connected?.forEach((handler) => handler());
       return undefined;
     }
 
@@ -40,6 +47,7 @@ vi.mock("livekit-client", () => ({
     ParticipantConnected: "participantConnected",
     TrackSubscribed: "trackSubscribed",
     TrackUnsubscribed: "trackUnsubscribed",
+    TranscriptionReceived: "transcriptionReceived",
   },
   Track: {
     Kind: {
@@ -60,7 +68,7 @@ function buildMockContext() {
   return {
     tenantSlug: "voice-demo",
     workspaceId: "workspace-1",
-    currentUser: { email: "admin@voice.local" },
+    currentUser: { email: "admin@voice.local", displayName: "Voice Admin" },
     selectedAgentId: "agent-1",
     selectAgent: vi.fn(),
     agents: [
@@ -68,7 +76,10 @@ function buildMockContext() {
         id: "agent-1",
         name: "Lead Router",
         description: "Primary qualification flow",
-        flowNodes: [{ id: "router", prompt: "Route the caller safely." }],
+        sharedPrompt: "Qualify clearly.",
+        stack: { stt: "Deepgram", llm: "OpenAI", tts: "Cartesia" },
+        flowNodes: [{ id: "router", label: "Router", state: "Intent", prompt: "Route the caller safely." }],
+        flowEdges: [],
         runtimeProfile: buildMockRuntime(),
       },
     ],
@@ -76,7 +87,10 @@ function buildMockContext() {
       id: "agent-1",
       name: "Lead Router",
       description: "Primary qualification flow",
-      flowNodes: [{ id: "router", prompt: "Route the caller safely." }],
+      sharedPrompt: "Qualify clearly.",
+      stack: { stt: "Deepgram", llm: "OpenAI", tts: "Cartesia" },
+      flowNodes: [{ id: "router", label: "Router", state: "Intent", prompt: "Route the caller safely." }],
+      flowEdges: [],
       runtimeProfile: buildMockRuntime(),
     },
     providerAccounts: [
@@ -116,6 +130,32 @@ function buildMockContext() {
 describe("LivePage", () => {
   beforeEach(() => {
     mockCreateBrowserRtcSession.mockReset();
+    mockUpdateLiveTestSession.mockReset();
+    mockUpdateLiveTestSession.mockResolvedValue({
+      call_id: "call-test-1",
+      agent_id: "agent-1",
+      agent_name: "Lead Router",
+      is_test: true,
+      lifecycle_status: "in_progress",
+      room_name: "voice-room-local",
+      dispatch_id: "dispatch-123",
+      participant_identity: "web-user-1",
+      participant_name: "Voice Admin",
+      vendor_trace: "Deepgram -> OpenAI -> Cartesia",
+      summary: "Browser live test prepared.",
+      outcome: "Queued for live test",
+      next_step: "Join the room and speak with the agent.",
+      synced_to_crm: false,
+      transcript: [],
+      extracted_variables: [],
+      tool_calls: [],
+      guardrails: [],
+      metrics: {},
+      event_log: [],
+      started_at: null,
+      ended_at: null,
+      created_at: "2026-08-22T12:00:00Z",
+    });
     mockUseMockApp.mockReturnValue(buildMockContext());
   });
 
@@ -128,7 +168,7 @@ describe("LivePage", () => {
         ...current.selectedAgent,
         runtimeProfile: {
           ...buildMockRuntime(),
-          llm: { ...buildMockRuntime().llm, providerAccountId: "" }
+          llm: { ...buildMockRuntime().llm, providerAccountId: "" },
         },
       },
     });
@@ -141,9 +181,10 @@ describe("LivePage", () => {
     ).toBeInTheDocument();
   });
 
-  it("creates a browser rtc session from the selected agent runtime", async () => {
+  it("creates and persists a browser rtc test session from the selected agent runtime", async () => {
     const user = userEvent.setup();
     mockCreateBrowserRtcSession.mockResolvedValue({
+      call_id: "call-test-1",
       room_name: "voice-room-local",
       participant_identity: "web-user-1",
       participant_name: "Voice Admin",
@@ -164,11 +205,24 @@ describe("LivePage", () => {
       "voice-demo",
       "workspace-1",
       expect.objectContaining({
-        dispatch_agent_name: "lead-router",
+        agent_id: "agent-1",
         stt: expect.objectContaining({ api_key: "dg-key" }),
         llm: expect.objectContaining({ api_key: "oa-key" }),
         tts: expect.objectContaining({ api_key: "ca-key" }),
       })
     );
+
+    await waitFor(() => {
+      expect(mockUpdateLiveTestSession).toHaveBeenCalledWith(
+        "voice-demo",
+        "workspace-1",
+        "call-test-1",
+        expect.objectContaining({
+          lifecycle_status: "in_progress",
+        })
+      );
+    });
+
+    expect(screen.getByText("Persisted as a test call")).toBeInTheDocument();
   });
 });

@@ -9,8 +9,10 @@ from voice_backend.schemas import (
     AgentStudioUpdateInput,
     AgentVersionCreateInput,
     BrowserRtcSessionCreateInput,
+    BrowserRtcSessionRecord,
     CallReviewCreateInput,
     CallReviewUpdateInput,
+    LiveTestSessionUpdateInput,
     ProviderAccountCreateInput,
     ProviderAccountUpdateInput,
     TeamMemberCreateInput,
@@ -25,6 +27,7 @@ from voice_backend.services import (
     AgentDefinitionAdminService,
     CallHistoryService,
     CallReviewService,
+    LiveTestSessionService,
     ProviderAccountAdminService,
     RealtimeSessionService,
     TeamAdminService,
@@ -118,6 +121,23 @@ def test_call_history_service_returns_recent_calls_with_agent_name(session, seed
     assert [call.status for call in calls] == ["in_progress", "completed"]
     assert calls[0].agent_name == "Lead Router"
     assert calls[0].to_number == "+15550102"
+
+
+def test_tenant_overview_and_workspace_state_exclude_test_calls(session, seeded_domain) -> None:
+    test_call = seeded_domain["second_call"]
+    test_call.is_test = True
+    session.commit()
+
+    overview = TenantOverviewService(session).get_by_slug("voice-demo")
+    workspace_state = WorkspaceStateService(session).get_state(
+        "voice-demo", seeded_domain["workspace"].id
+    )
+
+    assert overview is not None
+    assert overview.active_call_count == 1
+    assert overview.total_call_count == 2
+    assert workspace_state is not None
+    assert all(call.is_test is False for call in workspace_state.calls)
 
 
 def test_provider_account_admin_service_updates_existing_account(session, seeded_domain) -> None:
@@ -420,6 +440,69 @@ def test_call_review_service_supports_create_update_and_delete(session, seeded_d
     assert deleted is True
 
 
+def test_live_test_session_service_persists_and_updates_browser_sessions(session, seeded_domain) -> None:
+    service = LiveTestSessionService(session)
+
+    created = service.create_session_record(
+        "voice-demo",
+        seeded_domain["workspace"].id,
+        BrowserRtcSessionCreateInput(
+            agent_id=seeded_domain["agent"].id,
+            dispatch_agent_name="voice-router-agent",
+            metadata={
+                "launch_number": "browser-live",
+                "vendor_trace": "Deepgram -> OpenAI -> Cartesia",
+            },
+            stt={"api_key": "dg-key"},
+            llm={"api_key": "oa-key"},
+            tts={"api_key": "ca-key"},
+        ),
+        BrowserRtcSessionRecord(
+            call_id=None,
+            room_name="voice-room-local",
+            participant_identity="web-user-1",
+            participant_name="Voice Admin",
+            server_url="ws://127.0.0.1:7880",
+            access_token="jwt-token",
+            dispatch_id="dispatch-123",
+            dispatch_agent_name="voice-router-agent",
+            session={"session_id": "session-1"},
+            runtime={"transport": "livekit"},
+            warnings=[],
+            errors=[],
+        ),
+        launched_by="admin@voice.local",
+    )
+    assert created is not None
+
+    updated = service.update_session_record(
+        "voice-demo",
+        seeded_domain["workspace"].id,
+        created.call_id,
+        LiveTestSessionUpdateInput(
+            lifecycle_status="completed",
+            summary="Browser live test completed cleanly.",
+            outcome="Test call completed",
+            next_step="Review the transcript.",
+            transcript=[{"speaker": "You", "timestamp": "00:01", "text": "Hello there"}],
+            metrics={"duration": "00:12"},
+            append_events=[
+                {
+                    "event_type": "room_connected",
+                    "message": "Connected to LiveKit room.",
+                }
+            ],
+        ),
+    )
+
+    assert updated is not None
+    assert updated.is_test is True
+    assert updated.lifecycle_status == "completed"
+    assert updated.transcript[0]["text"] == "Hello there"
+    assert updated.event_log[-1]["event_type"] == "room_connected"
+    assert updated.metrics["duration"] == "00:12"
+
+
 @pytest.mark.asyncio
 async def test_realtime_session_service_builds_join_credentials(monkeypatch) -> None:
     manifest_response = {
@@ -488,6 +571,7 @@ async def test_realtime_session_service_builds_join_credentials(monkeypatch) -> 
     )
     created = await service.create_browser_session(
         BrowserRtcSessionCreateInput(
+            agent_id=uuid4(),
             stt={"api_key": "dg-key"},
             llm={"api_key": "oa-key"},
             tts={"api_key": "ca-key"},
