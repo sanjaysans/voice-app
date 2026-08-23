@@ -108,7 +108,7 @@ function isNavItemActive(pathname: string, href: string) {
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const pathname = usePathname();
+  const pathname = usePathname() ?? "";
   const {
     currentUser,
     notifications,

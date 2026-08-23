@@ -485,6 +485,17 @@ class BrowserRtcSessionCreateInput(BaseModel):
     session_id: str | None = None
     pipeline_mode: PipelineMode = "stt_llm_tts"
     dispatch_agent_name: str = "voice-router-agent"
+    room: BrowserRtcRoomInput = Field(default_factory=BrowserRtcRoomInput)
+    vad: BrowserRtcVadInput = Field(default_factory=BrowserRtcVadInput)
+    metadata: dict[str, str] = Field(default_factory=dict)
+    participant_name: str | None = None
+
+
+class BrowserRtcSessionResolvedInput(BaseModel):
+    agent_id: UUID
+    session_id: str | None = None
+    pipeline_mode: PipelineMode = "stt_llm_tts"
+    dispatch_agent_name: str = "voice-router-agent"
     prompt: BrowserRtcPromptInput = Field(default_factory=BrowserRtcPromptInput)
     room: BrowserRtcRoomInput = Field(default_factory=BrowserRtcRoomInput)
     stt: BrowserRtcDeepgramInput

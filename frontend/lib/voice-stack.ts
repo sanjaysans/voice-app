@@ -633,7 +633,7 @@ export function summarizeConnection(record: ProviderAccountRecord) {
     const numbers = parsePhoneNumbers(config.phone_numbers);
     return `${numbers.length} numbers ready`;
   }
-  return config.api_key ? "Credentials saved" : "Credentials missing";
+  return record.configKeys.includes("api_key") ? "Credentials saved" : "Credentials missing";
 }
 
 export function getAccountsByKind(

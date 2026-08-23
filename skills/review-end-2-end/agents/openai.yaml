@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review End To End"
+  short_description: "Run multi-agent repo review loops"
+  default_prompt: "Use $review-end-2-end to audit the whole repo from scratch with the full reviewer roster and a developer-fix loop."

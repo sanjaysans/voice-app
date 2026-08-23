@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     host: str = Field(default="0.0.0.0", validation_alias=AliasChoices("VOICE_PIPELINE_HOST"))
     port: int = Field(default=8101, validation_alias=AliasChoices("VOICE_PIPELINE_PORT"))
     log_level: str = Field(default="INFO", validation_alias=AliasChoices("VOICE_LOG_LEVEL"))
+    secret_encryption_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("VOICE_SECRET_ENCRYPTION_KEY"),
+    )
     pipeline_mode: PipelineMode = Field(
         default=PipelineMode.STT_LLM_TTS,
         validation_alias=AliasChoices("VOICE_PIPELINE_MODE"),
@@ -135,6 +139,10 @@ class Settings(BaseSettings):
                     field_name,
                     None if field_name != "livekit_agent_name" else "voice-router-agent",
                 )
+        if self.secret_encryption_key is None:
+            if self.environment == "prod":
+                raise ValueError("VOICE_SECRET_ENCRYPTION_KEY must be configured for production")
+            object.__setattr__(self, "secret_encryption_key", "voice-local-dev-encryption-key")
 
         if self.min_endpointing_ms > self.endpointing_ms:
             raise ValueError("VOICE_PIPELINE_MIN_ENDPOINTING_MS cannot exceed endpointing_ms")

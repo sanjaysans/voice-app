@@ -11,24 +11,33 @@ test("stakeholder flow stays navigable across build, operate, and admin", async 
   await page.goto("/login");
   await page.getByLabel("Work email").fill("investor-demo@voice.local");
   await page.getByLabel("Password").fill("VoiceDemo123!");
-  await page.getByRole("button", { name: /Continue to workspace/ }).click();
+  await page.getByRole("button", { name: /Continue to Voice/ }).click();
+  await page.waitForURL(/\/dashboard$/);
+  await expect(page.getByText("Loading Voice...")).not.toBeVisible({ timeout: 45_000 });
   await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible({
-    timeout: 20_000,
+    timeout: 45_000,
   });
+
+  await expect(page.getByRole("link", { name: "New live test" })).toBeVisible();
 
   await page.getByRole("link", { name: "Agents" }).click();
   await expect(page.getByRole("heading", { name: "Agents" })).toBeVisible();
-  await page.getByRole("link", { name: "Open studio" }).first().click();
-  await expect(page).toHaveURL(/\/agents\/builder$/);
-  await expect(page.getByRole("heading", { name: "Agent studio" })).toBeVisible();
+  await page.getByRole("button", { name: "Edit in studio" }).first().click();
+  await expect(page).toHaveURL(/\/agents\/[^/]+$/);
+  await expect(page.getByRole("button", { name: "Overview" })).toBeVisible({ timeout: 45_000 });
+
+  await page.getByRole("link", { name: "Live" }).click();
+  await expect(page.getByRole("heading", { name: "Live", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Start a browser live test" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Join live room" })).toBeVisible();
+
+  await page.getByRole("link", { name: "Call logs" }).click();
+  await expect(page.getByRole("heading", { name: "Call logs", exact: true })).toBeVisible();
+  await expect(page.getByLabel("Search")).toBeVisible();
 
   await page.getByRole("link", { name: "Calls" }).click();
   await expect(page.getByRole("heading", { name: "Calls" })).toBeVisible();
-  await page.getByRole("main").getByRole("button", { name: "Trigger & connect" }).last().click();
-  await page.getByRole("button", { name: "In call" }).click();
-  await expect(page.getByRole("heading", { name: "Live state" })).toBeVisible();
-  await page.getByRole("button", { name: "Review" }).click();
-  await expect(page.getByRole("heading", { name: "Call review" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open Live" })).toBeVisible();
 
   await page.getByRole("link", { name: "Connections" }).click();
   await expect(page.getByRole("heading", { name: "Connections" })).toBeVisible();

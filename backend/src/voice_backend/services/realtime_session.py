@@ -6,10 +6,11 @@ from uuid import UUID, uuid4
 import httpx
 from livekit.api import AccessToken, LiveKitAPI, VideoGrants
 from livekit.protocol.agent_dispatch import CreateAgentDispatchRequest
-from livekit.protocol.room import CreateRoomRequest
+from livekit.protocol.room import CreateRoomRequest, DeleteRoomRequest
 
 from voice_backend.config import Settings
-from voice_backend.schemas import BrowserRtcSessionCreateInput, BrowserRtcSessionRecord
+from voice_backend.schemas import BrowserRtcSessionRecord, BrowserRtcSessionResolvedInput
+from voice_backend.secrets import encrypt_runtime_metadata
 
 
 class RealtimeSessionError(RuntimeError):
@@ -22,7 +23,7 @@ class RealtimeSessionService:
 
     async def create_browser_session(
         self,
-        payload: BrowserRtcSessionCreateInput,
+        payload: BrowserRtcSessionResolvedInput,
         *,
         user_id: UUID,
         display_name: str,
@@ -48,13 +49,17 @@ class RealtimeSessionService:
         dispatch = await self._create_room_dispatch(
             room_name=room_name,
             agent_name=str(manifest["dispatch_agent_name"]),
-            metadata=str(manifest["dispatch_metadata"]),
+            metadata=encrypt_runtime_metadata(str(manifest["dispatch_metadata"]), self._settings),
         )
-        access_token = self._create_access_token(
-            room_name=room_name,
-            participant_identity=participant_identity,
-            participant_name=participant_name,
-        )
+        try:
+            access_token = self._create_access_token(
+                room_name=room_name,
+                participant_identity=participant_identity,
+                participant_name=participant_name,
+            )
+        except Exception as exc:
+            await self.cleanup_browser_session(room_name=room_name, dispatch_id=dispatch.id)
+            raise RealtimeSessionError("live session access token generation failed") from exc
 
         return BrowserRtcSessionRecord(
             room_name=room_name,
@@ -69,6 +74,24 @@ class RealtimeSessionService:
             warnings=[str(item) for item in manifest["warnings"]],
             errors=[str(item) for item in manifest["errors"]],
         )
+
+    async def cleanup_browser_session(self, *, room_name: str, dispatch_id: str | None) -> None:
+        if not room_name:
+            return
+        async with LiveKitAPI(
+            url=self._settings.livekit_url,
+            api_key=self._settings.livekit_api_key,
+            api_secret=self._settings.livekit_api_secret,
+        ) as livekit_api:
+            if dispatch_id:
+                try:
+                    await livekit_api.agent_dispatch.delete_dispatch(dispatch_id, room_name)
+                except Exception:
+                    pass
+            try:
+                await livekit_api.room.delete_room(DeleteRoomRequest(room=room_name))
+            except Exception:
+                pass
 
     async def _build_pipeline_manifest(self, payload: dict[str, object]) -> dict[str, object]:
         endpoint = self._settings.pipeline_base_url.rstrip("/") + "/webrtc/session"
@@ -105,13 +128,20 @@ class RealtimeSessionService:
                     max_participants=8,
                 )
             )
-            return await livekit_api.agent_dispatch.create_dispatch(
-                CreateAgentDispatchRequest(
-                    room=room_name,
-                    agent_name=agent_name,
-                    metadata=metadata,
+            try:
+                return await livekit_api.agent_dispatch.create_dispatch(
+                    CreateAgentDispatchRequest(
+                        room=room_name,
+                        agent_name=agent_name,
+                        metadata=metadata,
+                    )
                 )
-            )
+            except Exception as exc:
+                try:
+                    await livekit_api.room.delete_room(DeleteRoomRequest(room=room_name))
+                except Exception:
+                    pass
+                raise RealtimeSessionError("live session dispatch creation failed") from exc
 
     def _create_access_token(
         self,

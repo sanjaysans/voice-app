@@ -404,7 +404,7 @@ function toCallRecord(response: CallResponse): CallRecord {
 
 export function MockAppProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
-  const pathname = usePathname();
+  const pathname = usePathname() ?? "";
   const [currentUser, setCurrentUser] = useState<MockAppContextValue["currentUser"]>(null);
   const [tenantSlug, setTenantSlug] = useState("");
   const [workspaceId, setWorkspaceId] = useState("");
@@ -423,7 +423,7 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [dateRange, setDateRange] = useState(dateRanges[1]);
   const [isReady, setIsReady] = useState(false);
-  const [isHydratingRouteData, setIsHydratingRouteData] = useState(false);
+  const [, setIsHydratingRouteData] = useState(false);
   const [bootstrapError, setBootstrapError] = useState("");
   const hydratedScopeRef = useRef<{
     tenantSlug: string;
@@ -599,7 +599,7 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
     setTenantSlug(resolved.tenantSlug);
     setWorkspaceId(resolved.workspaceId);
     setWorkspaceName(resolved.workspaceName);
-    await hydrateRouteData(routeDataScope, {
+    void hydrateRouteData(routeDataScope, {
       tenantSlug: resolved.tenantSlug,
       workspaceId: resolved.workspaceId,
     });
@@ -763,11 +763,6 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
 
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? agents[0] ?? null;
   const selectedCall = callHistory.find((call) => call.id === selectedCallId) ?? callHistory[0] ?? null;
-  const shouldBlockOnRouteData =
-    Boolean(tenantSlug && workspaceId) &&
-    routeDataScope !== "light" &&
-    !hasHydratedRouteData(routeDataScope, { tenantSlug, workspaceId });
-
   const value = useMemo<MockAppContextValue>(
     () => ({
       currentUser,
@@ -1070,7 +1065,7 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
     ]
   );
 
-  if (!isReady || shouldBlockOnRouteData || isHydratingRouteData) {
+  if (!isReady) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-canvas text-sm text-[#6D6D78]">
         Loading Voice...

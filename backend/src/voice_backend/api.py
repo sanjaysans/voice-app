@@ -277,7 +277,7 @@ def update_workspace(
     session: SessionDependency,
     auth: AuthDependency,
 ):
-    require_workspace_access(auth, tenant_slug, workspace_id)
+    require_workspace_admin_access(auth, tenant_slug, workspace_id)
     updated = _execute_write(
         session,
         lambda: WorkspaceAdminService(session).update_workspace(tenant_slug, workspace_id, payload),
@@ -353,7 +353,7 @@ def update_team_member(
     session: SessionDependency,
     auth: AuthDependency,
 ):
-    require_workspace_access(auth, tenant_slug, workspace_id)
+    require_workspace_admin_access(auth, tenant_slug, workspace_id)
     updated = _execute_write(
         session,
         lambda: TeamAdminService(session).update_member(
@@ -471,7 +471,7 @@ def update_workspace_agent_studio(
     session: SessionDependency,
     auth: AuthDependency,
 ):
-    require_workspace_access(auth, tenant_slug, workspace_id)
+    require_workspace_write_access(auth, tenant_slug, workspace_id)
     updated = _execute_write(
         session,
         lambda: AgentDefinitionAdminService(session).update_studio(
@@ -492,7 +492,7 @@ def create_workspace_agent_version(
     session: SessionDependency,
     auth: AuthDependency,
 ):
-    require_workspace_access(auth, tenant_slug, workspace_id)
+    require_workspace_write_access(auth, tenant_slug, workspace_id)
     updated = _execute_write(
         session,
         lambda: AgentDefinitionAdminService(session).create_version(
@@ -588,28 +588,36 @@ async def create_browser_rtc_session(
     auth: AuthDependency,
 ):
     require_workspace_write_access(auth, tenant_slug, workspace_id)
-    workspace = WorkspaceAdminService(session).get_workspace(tenant_slug, workspace_id)
-    if workspace is None:
-        raise HTTPException(status_code=404, detail="workspace not found")
+    prepared = LiveTestSessionService(session).prepare_browser_session(
+        tenant_slug, workspace_id, payload
+    )
+    if prepared is None:
+        raise HTTPException(status_code=404, detail="live test session dependencies not found")
+    realtime = RealtimeSessionService(request.app.state.settings)
     try:
-        created = await RealtimeSessionService(request.app.state.settings).create_browser_session(
-            payload,
+        created = await realtime.create_browser_session(
+            prepared.session_input,
             user_id=auth.user_id,
             display_name=auth.display_name,
         )
     except RealtimeSessionError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    live_record = _execute_write(
-        session,
-        lambda: LiveTestSessionService(session).create_session_record(
-            tenant_slug,
-            workspace_id,
-            payload,
-            created,
-            launched_by=auth.email,
-        ),
-    )
+    try:
+        live_record = _execute_write(
+            session,
+            lambda: LiveTestSessionService(session).create_session_record(
+                tenant_slug,
+                workspace_id,
+                prepared.session_input,
+                created,
+                launched_by=auth.email,
+            ),
+        )
+    except HTTPException:
+        await realtime.cleanup_browser_session(room_name=created.room_name, dispatch_id=created.dispatch_id)
+        raise
     if live_record is None:
+        await realtime.cleanup_browser_session(room_name=created.room_name, dispatch_id=created.dispatch_id)
         raise HTTPException(status_code=404, detail="live test agent not found")
     created.call_id = live_record.call_id
     return created.model_dump()
@@ -665,7 +673,7 @@ def update_call_review(
     session: SessionDependency,
     auth: AuthDependency,
 ):
-    require_workspace_access(auth, tenant_slug, workspace_id)
+    require_workspace_write_access(auth, tenant_slug, workspace_id)
     updated = _execute_write(
         session,
         lambda: CallReviewService(session).update_review(
@@ -749,7 +757,7 @@ def update_provider_account(
     session: SessionDependency,
     auth: AuthDependency,
 ):
-    require_tenant_access(auth, tenant_slug)
+    require_tenant_write_access(auth, tenant_slug)
     updated = _execute_write(
         session,
         lambda: ProviderAccountAdminService(session).update_account(
@@ -768,7 +776,7 @@ def run_provider_account_health_check(
     session: SessionDependency,
     auth: AuthDependency,
 ):
-    require_tenant_access(auth, tenant_slug)
+    require_tenant_write_access(auth, tenant_slug)
     checked = _execute_write(
         session,
         lambda: ProviderAccountAdminService(session).run_health_check(

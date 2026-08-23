@@ -68,10 +68,10 @@ export default function DashboardPage() {
       done: connectedSystems >= 3
     },
     {
-      title: "Run the primary call flow",
-      detail: "Use the qualification flow to validate routing, outcome capture, and next-step booking.",
-      href: "/calls",
-      cta: "Launch call",
+      title: "Run the browser live test",
+      detail: "Use Live to validate the saved agent, runtime stack, transcript, and next-step review flow without telephony setup.",
+      href: "/live",
+      cta: "Open Live",
       done: callHistory.some((call) => call.outcome === "Meeting booked")
     }
   ];
@@ -101,7 +101,7 @@ export default function DashboardPage() {
             <Button asChild href={activeAgentHref} variant="secondary">
               Refine agent
             </Button>
-            <Button asChild href="/calls">New call</Button>
+            <Button asChild href="/live">New live test</Button>
           </>
         }
       />

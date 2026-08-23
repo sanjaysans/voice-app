@@ -4,37 +4,11 @@ import { api } from "@/lib/api-client";
 
 export type BrowserRtcSessionPayload = {
   agent_id: string;
-  dispatch_agent_name?: string;
-  prompt?: {
-    system_prompt?: string;
-    opening_message?: string | null;
-  };
   room?: {
     room_name?: string | null;
     participant_identity?: string | null;
   };
-  stt: {
-    api_key: string;
-    model?: string;
-    language?: string;
-    keyterms?: string[];
-  };
-  llm: {
-    api_key: string;
-    model?: string;
-    temperature?: number;
-    max_output_tokens?: number | null;
-  };
-  tts: {
-    api_key: string;
-    model?: string;
-    voice?: string;
-    language?: string;
-    speed?: number;
-    emotion?: string;
-    volume?: number;
-    sample_rate?: number;
-  };
+  participant_name?: string;
   metadata?: Record<string, string>;
 };
 

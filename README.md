@@ -86,3 +86,7 @@ Local defaults after startup:
 8. Approve and merge
 
 The current phase is moving from design-first into a local-first implementation scaffold, while the full product mock still lives in `mock_design`.
+
+For a full repo audit from scratch, run `make review-end-2-end` for the shared verification
+baseline and invoke the repo-local Codex skill `$review-end-2-end` for the multi-agent review
+and developer-fix loop.

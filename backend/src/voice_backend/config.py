@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     host: str = Field(default="0.0.0.0", validation_alias=AliasChoices("VOICE_BACKEND_HOST"))
     port: int = Field(default=8100, validation_alias=AliasChoices("VOICE_BACKEND_PORT"))
     log_level: str = Field(default="INFO", validation_alias=AliasChoices("VOICE_LOG_LEVEL"))
+    secret_encryption_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("VOICE_SECRET_ENCRYPTION_KEY"),
+    )
     session_secret: str | None = Field(
         default=None,
         validation_alias=AliasChoices("VOICE_SESSION_SECRET"),
@@ -112,6 +116,10 @@ class Settings(BaseSettings):
             if resolved.environment == "prod":
                 raise ValueError("VOICE_SESSION_SECRET must be configured for production")
             object.__setattr__(resolved, "session_secret", "voice-local-dev-session-secret")
+        if resolved.secret_encryption_key is None:
+            if resolved.environment == "prod":
+                raise ValueError("VOICE_SECRET_ENCRYPTION_KEY must be configured for production")
+            object.__setattr__(resolved, "secret_encryption_key", "voice-local-dev-encryption-key")
         if resolved.environment != "prod" and resolved.password_hash_iterations == 150_000:
             object.__setattr__(resolved, "password_hash_iterations", 1_000)
 

@@ -28,6 +28,7 @@ This directory defines how work moves from product intent to merged code.
 - `linear-task-template.md` for task creation
 - `plan-template.md` for implementation planning
 - `change-review-gate.md` for change-completion review
+- `review-end-to-end.md` for full-repo multi-agent audits
 - `manual-review-checklist.md` for pre-merge product review
 
 ## Exit Criteria Before Merge

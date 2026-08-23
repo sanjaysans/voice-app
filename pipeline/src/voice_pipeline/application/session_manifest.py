@@ -1,11 +1,12 @@
 import json
 
 from voice_pipeline.application.planner import compile_runtime_plan, default_pipeline_blueprint
-from voice_pipeline.config import Settings
+from voice_pipeline.config import Settings, get_settings
 from voice_pipeline.domain.models import PipelineBlueprint, RuntimePlan
 from voice_pipeline.domain.session import ClientSessionRequest
 from voice_pipeline.infrastructure.livekit_runtime import LiveKitRuntimeValidator
 from voice_pipeline.infrastructure.provider_registry import default_provider_registry
+from voice_pipeline.security import decrypt_runtime_metadata
 
 
 def blueprint_for_client_session(
@@ -56,4 +57,5 @@ def build_session_manifest(
 
 
 def parse_session_request_metadata(metadata: str) -> ClientSessionRequest:
-    return ClientSessionRequest.model_validate(json.loads(metadata))
+    decrypted = decrypt_runtime_metadata(metadata, get_settings())
+    return ClientSessionRequest.model_validate(json.loads(decrypted))

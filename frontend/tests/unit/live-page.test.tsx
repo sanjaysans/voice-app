@@ -100,7 +100,9 @@ function buildMockContext() {
         vendorName: "deepgram",
         label: "Primary STT",
         status: "active",
-        preview: { api_key: "dg-key", default_model: "flux-general-en", language: "en-US" },
+        hasConfig: true,
+        configKeys: ["api_key"],
+        preview: { default_model: "flux-general-en", language: "en-US" },
       },
       {
         id: "llm-1",
@@ -108,7 +110,9 @@ function buildMockContext() {
         vendorName: "openai",
         label: "Primary LLM",
         status: "active",
-        preview: { api_key: "oa-key", default_model: "gpt-4.1-mini" },
+        hasConfig: true,
+        configKeys: ["api_key"],
+        preview: { default_model: "gpt-4.1-mini" },
       },
       {
         id: "tts-1",
@@ -116,8 +120,9 @@ function buildMockContext() {
         vendorName: "cartesia",
         label: "Primary TTS",
         status: "active",
+        hasConfig: true,
+        configKeys: ["api_key"],
         preview: {
-          api_key: "ca-key",
           default_model: "sonic-3",
           default_voice_id: "voice-1",
           language: "en",
@@ -206,9 +211,7 @@ describe("LivePage", () => {
       "workspace-1",
       expect.objectContaining({
         agent_id: "agent-1",
-        stt: expect.objectContaining({ api_key: "dg-key" }),
-        llm: expect.objectContaining({ api_key: "oa-key" }),
-        tts: expect.objectContaining({ api_key: "ca-key" }),
+        participant_name: "Voice Admin",
       })
     );
 

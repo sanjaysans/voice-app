@@ -10,6 +10,11 @@ from voice_backend.schemas import (
     ProviderAccountRecord,
     ProviderAccountUpdateInput,
 )
+from voice_backend.secrets import (
+    build_provider_config_preview,
+    decrypt_provider_config,
+    encrypt_provider_config,
+)
 from voice_backend.services.read_cache import clear_read_cache, get_read_cache, set_read_cache
 
 logger = get_logger(__name__)
@@ -22,9 +27,7 @@ SAFE_PREVIEW_KEYS = {
     "ui_status",
     "detail",
     "last_checked",
-    "api_key",
     "account_sid",
-    "auth_token",
     "phone_numbers",
     "region",
     "default_model",
@@ -98,7 +101,7 @@ def _get_config_secret(config: dict[str, object], key: str) -> str | None:
 
 
 def _build_probe_request(account, rule: dict[str, object]) -> dict[str, object]:
-    config = account.config or {}
+    config = decrypt_provider_config(account.config or {})
     auth_mode = str(rule["auth"])
     url_template = str(rule["url_template"])
     url = url_template.format(account_sid=str(config.get("account_sid", "")).strip())
@@ -137,7 +140,7 @@ def _success_from_vendor_response(response: httpx.Response) -> tuple[bool, str]:
 
 
 def _health_check_payload(account) -> tuple[str, dict[str, object]]:
-    config = account.config or {}
+    config = decrypt_provider_config(account.config or {})
     rule = HEALTH_CHECK_RULES.get((account.provider_kind, account.vendor_name))
     if rule is None:
         return "error", {
@@ -207,7 +210,11 @@ def _to_record(account) -> ProviderAccountRecord:
         status=account.status,
         has_config=bool(config),
         config_keys=sorted(config.keys()),
-        preview={key: config[key] for key in sorted(config.keys()) if key in SAFE_PREVIEW_KEYS},
+        preview={
+            key: value
+            for key, value in build_provider_config_preview(config).items()
+            if key in SAFE_PREVIEW_KEYS
+        },
         created_at=account.created_at,
         updated_at=account.updated_at,
     )
@@ -258,7 +265,7 @@ class ProviderAccountAdminService:
             payload.vendor_name,
             payload.label,
             status=payload.status,
-            config=payload.config,
+            config=encrypt_provider_config(payload.config),
         )
         clear_read_cache()
         logger.info(
@@ -293,7 +300,7 @@ class ProviderAccountAdminService:
             vendor_name=payload.vendor_name,
             label=payload.label,
             status=payload.status,
-            config=payload.config,
+            config=encrypt_provider_config(payload.config or {}) if payload.config is not None else None,
         )
         clear_read_cache()
         logger.info(

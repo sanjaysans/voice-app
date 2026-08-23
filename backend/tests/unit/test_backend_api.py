@@ -7,7 +7,12 @@ from voice_backend import api as backend_api
 from voice_backend.app import create_app
 from voice_backend.auth import get_current_auth
 from voice_backend.database import get_request_session
-from voice_backend.schemas import SessionMembershipRecord
+from voice_backend.schemas import (
+    AgentStudioUpdateInput,
+    ProviderAccountCreateInput,
+    SessionMembershipRecord,
+)
+from voice_backend.services import AgentDefinitionAdminService, ProviderAccountAdminService
 
 
 def build_test_app(session, auth_context):
@@ -455,6 +460,66 @@ async def test_call_review_endpoints_create_update_and_delete(
 async def test_browser_rtc_session_endpoint_returns_join_credentials(
     session, seeded_domain, auth_context, monkeypatch
 ) -> None:
+    stt_account = ProviderAccountAdminService(session).create_account(
+        "voice-demo",
+        ProviderAccountCreateInput(
+            provider_kind="stt",
+            vendor_name="deepgram",
+            label="Live STT",
+            status="active",
+            config={"api_key": "dg-key"},
+        ),
+    )
+    llm_account = ProviderAccountAdminService(session).create_account(
+        "voice-demo",
+        ProviderAccountCreateInput(
+            provider_kind="llm",
+            vendor_name="openai",
+            label="Primary LLM",
+            status="active",
+            config={"api_key": "oa-key"},
+        ),
+    )
+    tts_account = ProviderAccountAdminService(session).create_account(
+        "voice-demo",
+        ProviderAccountCreateInput(
+            provider_kind="tts",
+            vendor_name="cartesia",
+            label="Primary TTS",
+            status="active",
+            config={"api_key": "ca-key"},
+        ),
+    )
+    AgentDefinitionAdminService(session).update_studio(
+        "voice-demo",
+        seeded_domain["workspace"].id,
+        seeded_domain["agent"].id,
+        AgentStudioUpdateInput(
+            shared_prompt="Qualify clearly.",
+            description="Primary qualification flow",
+            runtime_profile={
+                "workflow": {"sampleRate": 24000},
+                "prompt": {"openingMessage": "Hello from Voice."},
+                "stt": {
+                    "providerAccountId": str(stt_account.provider_account_id),
+                    "model": "flux-general-en",
+                    "language": "en-US",
+                },
+                "llm": {
+                    "providerAccountId": str(llm_account.provider_account_id),
+                    "model": "gpt-4.1-mini",
+                    "temperature": 0.2,
+                },
+                "tts": {
+                    "providerAccountId": str(tts_account.provider_account_id),
+                    "model": "sonic-3",
+                    "voiceId": "voice-1",
+                    "language": "en",
+                },
+            },
+        ),
+    )
+
     class StubRealtimeSessionService:
         def __init__(self, _settings) -> None:
             pass
@@ -494,10 +559,7 @@ async def test_browser_rtc_session_endpoint_returns_join_credentials(
             f"/api/v1/tenants/voice-demo/workspaces/{seeded_domain['workspace'].id}/live/sessions",
             json={
                 "agent_id": str(seeded_domain["agent"].id),
-                "dispatch_agent_name": "voice-router-agent",
-                "stt": {"api_key": "dg-key"},
-                "llm": {"api_key": "oa-key"},
-                "tts": {"api_key": "ca-key"},
+                "participant_name": "Voice Admin",
             },
         )
 

@@ -27,8 +27,9 @@ export default function WorkspacesPage() {
   const [workspaceToDelete, setWorkspaceToDelete] = useState<WorkspaceRecord | null>(null);
 
   useEffect(() => {
+    const nextWorkspaceOptions = workspaceOptions ?? [];
     setWorkspaces(
-      workspaceOptions.map((workspace) => ({
+      nextWorkspaceOptions.map((workspace) => ({
         workspace_id: workspace.workspace_id,
         name: workspace.name,
         is_default: workspace.is_default,

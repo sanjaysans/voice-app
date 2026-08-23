@@ -3,6 +3,7 @@ from uuid import uuid4
 import pytest
 
 from voice_backend.config import Settings
+from voice_backend.repositories import ProviderAccountRepository
 from voice_backend.schemas import (
     AgentDefinitionCreateInput,
     AgentDefinitionUpdateInput,
@@ -10,6 +11,7 @@ from voice_backend.schemas import (
     AgentVersionCreateInput,
     BrowserRtcSessionCreateInput,
     BrowserRtcSessionRecord,
+    BrowserRtcSessionResolvedInput,
     CallReviewCreateInput,
     CallReviewUpdateInput,
     LiveTestSessionUpdateInput,
@@ -246,7 +248,12 @@ def test_provider_account_admin_service_runs_health_check(session, seeded_domain
     assert checked is not None
     assert checked.status == "active"
     assert checked.preview["ui_status"] == "Connected"
+    assert "api_key" not in checked.preview
     assert "passed the live Deepgram credential check" in str(checked.preview["detail"])
+    stored = ProviderAccountRepository(session).get_for_tenant(
+        seeded_domain["tenant"].id, created.provider_account_id
+    )
+    assert isinstance(stored.config["api_key"], dict)
 
 
 def test_agent_definition_admin_service_creates_and_versions_agent(session, seeded_domain) -> None:
@@ -483,21 +490,82 @@ def test_call_review_service_supports_create_update_and_delete(session, seeded_d
 
 def test_live_test_session_service_persists_and_updates_browser_sessions(session, seeded_domain) -> None:
     service = LiveTestSessionService(session)
-
-    created = service.create_session_record(
+    stt_account = ProviderAccountAdminService(session).create_account(
+        "voice-demo",
+        ProviderAccountCreateInput(
+            provider_kind="stt",
+            vendor_name="deepgram",
+            label="Live STT",
+            status="active",
+            config={"api_key": "dg-key"},
+        ),
+    )
+    llm_account = ProviderAccountAdminService(session).create_account(
+        "voice-demo",
+        ProviderAccountCreateInput(
+            provider_kind="llm",
+            vendor_name="openai",
+            label="Primary LLM",
+            status="active",
+            config={"api_key": "oa-key"},
+        ),
+    )
+    tts_account = ProviderAccountAdminService(session).create_account(
+        "voice-demo",
+        ProviderAccountCreateInput(
+            provider_kind="tts",
+            vendor_name="cartesia",
+            label="Primary TTS",
+            status="active",
+            config={"api_key": "ca-key"},
+        ),
+    )
+    AgentDefinitionAdminService(session).update_studio(
+        "voice-demo",
+        seeded_domain["workspace"].id,
+        seeded_domain["agent"].id,
+        AgentStudioUpdateInput(
+            description="Primary qualification flow",
+            shared_prompt="Qualify clearly.",
+            runtime_profile={
+                "workflow": {"sampleRate": 24000},
+                "prompt": {"openingMessage": "Hello from Voice."},
+                "stt": {
+                    "providerAccountId": str(stt_account.provider_account_id),
+                    "model": "flux-general-en",
+                    "language": "en-US",
+                },
+                "llm": {
+                    "providerAccountId": str(llm_account.provider_account_id),
+                    "model": "gpt-4.1-mini",
+                    "temperature": 0.2,
+                },
+                "tts": {
+                    "providerAccountId": str(tts_account.provider_account_id),
+                    "model": "sonic-3",
+                    "voiceId": "voice-1",
+                    "language": "en",
+                },
+            },
+        ),
+    )
+    prepared = service.prepare_browser_session(
         "voice-demo",
         seeded_domain["workspace"].id,
         BrowserRtcSessionCreateInput(
             agent_id=seeded_domain["agent"].id,
-            dispatch_agent_name="voice-router-agent",
             metadata={
                 "launch_number": "browser-live",
                 "vendor_trace": "Deepgram -> OpenAI -> Cartesia",
             },
-            stt={"api_key": "dg-key"},
-            llm={"api_key": "oa-key"},
-            tts={"api_key": "ca-key"},
         ),
+    )
+    assert prepared is not None
+
+    created = service.create_session_record(
+        "voice-demo",
+        seeded_domain["workspace"].id,
+        prepared.session_input,
         BrowserRtcSessionRecord(
             call_id=None,
             room_name="voice-room-local",
@@ -542,6 +610,91 @@ def test_live_test_session_service_persists_and_updates_browser_sessions(session
     assert updated.transcript[0]["text"] == "Hello there"
     assert updated.event_log[-1]["event_type"] == "room_connected"
     assert updated.metrics["duration"] == "00:12"
+
+
+def test_live_test_session_service_sanitizes_invalid_stt_runtime_values(
+    session, seeded_domain
+) -> None:
+    service = LiveTestSessionService(session)
+
+    stt_account = ProviderAccountAdminService(session).create_account(
+        "voice-demo",
+        ProviderAccountCreateInput(
+            provider_kind="stt",
+            vendor_name="deepgram",
+            label="Deepgram STT",
+            status="active",
+            config={"api_key": "dg-key"},
+        ),
+    )
+    llm_account = ProviderAccountAdminService(session).create_account(
+        "voice-demo",
+        ProviderAccountCreateInput(
+            provider_kind="llm",
+            vendor_name="openai",
+            label="OpenAI",
+            status="active",
+            config={"api_key": "oa-key"},
+        ),
+    )
+    tts_account = ProviderAccountAdminService(session).create_account(
+        "voice-demo",
+        ProviderAccountCreateInput(
+            provider_kind="tts",
+            vendor_name="cartesia",
+            label="Cartesia",
+            status="active",
+            config={"api_key": "ca-key"},
+        ),
+    )
+    AgentDefinitionAdminService(session).update_studio(
+        "voice-demo",
+        seeded_domain["workspace"].id,
+        seeded_domain["agent"].id,
+        AgentStudioUpdateInput(
+            description="Primary qualification flow",
+            shared_prompt="Qualify clearly.",
+            runtime_profile={
+                "workflow": {"sampleRate": "bad-value"},
+                "stt": {
+                    "providerAccountId": str(stt_account.provider_account_id),
+                    "model": "nova-3-general",
+                    "language": "en-US",
+                    "endpointingMs": -5,
+                    "interimResults": "false",
+                    "enableDiarization": "false",
+                },
+                "llm": {
+                    "providerAccountId": str(llm_account.provider_account_id),
+                    "model": "gpt-4.1-mini",
+                    "temperature": "bad-value",
+                },
+                "tts": {
+                    "providerAccountId": str(tts_account.provider_account_id),
+                    "model": "sonic-3",
+                    "voiceId": "voice-1",
+                    "language": "en",
+                    "speed": "bad-value",
+                    "volume": "bad-value",
+                },
+            },
+        ),
+    )
+
+    prepared = service.prepare_browser_session(
+        "voice-demo",
+        seeded_domain["workspace"].id,
+        BrowserRtcSessionCreateInput(agent_id=seeded_domain["agent"].id),
+    )
+
+    assert prepared is not None
+    assert prepared.session_input.stt.endpointing_ms == 25
+    assert prepared.session_input.stt.interim_results is False
+    assert prepared.session_input.stt.enable_diarization is False
+    assert prepared.session_input.llm.temperature == 0.2
+    assert prepared.session_input.tts.speed == 1
+    assert prepared.session_input.tts.volume == 1
+    assert prepared.session_input.tts.sample_rate == 24000
 
 
 @pytest.mark.asyncio
@@ -611,7 +764,7 @@ async def test_realtime_session_service_builds_join_credentials(monkeypatch) -> 
         )
     )
     created = await service.create_browser_session(
-        BrowserRtcSessionCreateInput(
+        BrowserRtcSessionResolvedInput(
             agent_id=uuid4(),
             stt={"api_key": "dg-key"},
             llm={"api_key": "oa-key"},

@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import Callable
 from functools import partial
 from importlib import import_module
@@ -60,13 +61,20 @@ def build_worker_bootstrap(settings: Settings | None = None) -> dict[str, object
 
 def build_worker_options_kwargs(settings: Settings | None = None) -> dict[str, object]:
     resolved_settings = settings or get_settings()
-    return {
+    options: dict[str, object] = {
         "agent_name": resolved_settings.livekit_agent_name,
         "ws_url": resolved_settings.livekit_url,
         "api_key": resolved_settings.livekit_api_key,
         "api_secret": resolved_settings.livekit_api_secret,
         "log_level": resolved_settings.log_level,
     }
+    if resolved_settings.environment != "prod":
+        options.update(
+            {
+                "load_threshold": float("inf"),
+            }
+        )
+    return options
 
 
 def _default_session_request() -> ClientSessionRequest:
@@ -104,6 +112,44 @@ def _resolve_session_request(
     raise ValueError("client session metadata is required for the initial WebRTC flow")
 
 
+def _session_close_future(session: object, room: object) -> asyncio.Future[dict[str, str]]:
+    loop = asyncio.get_running_loop()
+    close_future: asyncio.Future[dict[str, str]] = loop.create_future()
+
+    def resolve_close(reason: str) -> None:
+        if not close_future.done():
+            close_future.set_result({"reason": reason})
+
+    if hasattr(session, "on"):
+        session.on("close", lambda *_args: resolve_close("session_closed"))
+    if hasattr(room, "on"):
+        room.on("disconnected", lambda *_args: resolve_close("room_disconnected"))
+
+    return close_future
+
+
+def _merge_turn_handling(bundle_turn_handling: dict[str, object], plan: object) -> dict[str, object]:
+    turn_policy = getattr(plan.blueprint, "turn_policy", None)
+    if turn_policy is None:
+        return dict(bundle_turn_handling)
+
+    endpointing = dict(bundle_turn_handling.get("endpointing", {}))
+    endpointing["min_delay"] = turn_policy.min_endpointing_ms / 1000
+    endpointing["max_delay"] = turn_policy.max_endpointing_ms / 1000
+
+    interruption = dict(bundle_turn_handling.get("interruption", {}))
+    interruption["enabled"] = bool(turn_policy.allow_interruptions)
+    interruption["resume_false_interruption"] = bool(
+        turn_policy.false_interruption_recovery
+    )
+
+    return {
+        **bundle_turn_handling,
+        "endpointing": endpointing,
+        "interruption": interruption,
+    }
+
+
 async def _run_worker_entrypoint(
     ctx: object,
     *,
@@ -134,6 +180,7 @@ async def _run_worker_entrypoint(
         return
 
     bundle = build_provider_bundle(resolved_request)
+    turn_handling = _merge_turn_handling(bundle.turn_handling, plan)
     if hasattr(ctx, "connect"):
         await ctx.connect(
             auto_subscribe=sdk["AutoSubscribe"].SUBSCRIBE_ALL,
@@ -150,12 +197,9 @@ async def _run_worker_entrypoint(
         llm=bundle.llm,
         tts=bundle.tts,
         vad=bundle.vad,
-        turn_handling=bundle.turn_handling,
-        allow_interruptions=plan.blueprint.turn_policy.allow_interruptions,
-        min_endpointing_delay=plan.blueprint.turn_policy.min_endpointing_ms / 1000,
-        max_endpointing_delay=plan.blueprint.turn_policy.max_endpointing_ms / 1000,
-        resume_false_interruption=plan.blueprint.turn_policy.false_interruption_recovery,
+        turn_handling=turn_handling,
     )
+    close_future = _session_close_future(session, ctx.room)
     agent = Agent(
         instructions=_build_agent_instructions(resolved_request),
         allow_interruptions=plan.blueprint.turn_policy.allow_interruptions,
@@ -172,6 +216,13 @@ async def _run_worker_entrypoint(
         room=getattr(getattr(ctx, "room", None), "name", None),
         session_id=resolved_request.session_id,
         call_context=_log_context(ctx),
+    )
+    close_event = await close_future
+    logger.info(
+        "pipeline.worker.session.closed",
+        room=getattr(getattr(ctx, "room", None), "name", None),
+        session_id=resolved_request.session_id,
+        close_reason=close_event["reason"],
     )
 
 

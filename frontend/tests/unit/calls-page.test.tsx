@@ -4,14 +4,16 @@ import { describe, expect, it } from "vitest";
 import CallsPage from "@/app/(app)/calls/page";
 
 describe("CallsPage", () => {
-  it("shows the intentional empty state", () => {
+  it("redirects operators toward the supported browser-live demo flow", () => {
     render(<CallsPage />);
 
-    expect(screen.getByText("Call launch is not configured yet")).toBeInTheDocument();
+    expect(screen.getByText("Telephony launch is not configured yet")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "No trigger-call workflow or live launch experience is in scope right now, so this page stays intentionally empty."
+        "Use Live for the supported no-telephony browser demo, then review the persisted transcript and outcome details in call logs."
       )
     ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open Live" })).toHaveAttribute("href", "/live");
+    expect(screen.getByRole("link", { name: "Open call logs" })).toHaveAttribute("href", "/calls/logs");
   });
 });

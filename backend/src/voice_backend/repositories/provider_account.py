@@ -1,3 +1,5 @@
+import uuid
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -39,9 +41,15 @@ class ProviderAccountRepository:
         return list(self.session.scalars(statement))
 
     def get_for_tenant(self, tenant_id, provider_account_id) -> ProviderAccount | None:
+        normalized_provider_account_id = provider_account_id
+        if isinstance(provider_account_id, str):
+            try:
+                normalized_provider_account_id = uuid.UUID(provider_account_id)
+            except ValueError:
+                return None
         statement = select(ProviderAccount).where(
             ProviderAccount.tenant_id == tenant_id,
-            ProviderAccount.id == provider_account_id,
+            ProviderAccount.id == normalized_provider_account_id,
         )
         return self.session.scalar(statement)
 

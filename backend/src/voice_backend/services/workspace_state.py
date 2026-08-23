@@ -18,6 +18,7 @@ from voice_backend.schemas import (
     WorkspaceAppState,
     WorkspaceRecord,
 )
+from voice_backend.secrets import build_provider_config_preview
 from voice_backend.services.provider_account_admin import to_provider_account_record
 from voice_backend.services.read_cache import get_read_cache, set_read_cache
 
@@ -121,7 +122,7 @@ def _connection_category(provider_kind: str) -> str:
 
 
 def _build_connection_record(account) -> ConnectionRecord:
-    config = account.config or {}
+    config = build_provider_config_preview(account.config or {})
     status = _connection_status(config)
     return ConnectionRecord(
         provider_account_id=account.id,

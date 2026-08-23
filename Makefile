@@ -2,7 +2,7 @@ UV ?= uv
 COMPOSE ?= docker compose
 ENV ?= dev
 
-.PHONY: setup node-setup infra-up infra-down infra-logs temporal-dev db-migrate db-seed db-verify backend pipeline pipeline-worker jobs mock livekit dev-up dev-down dev-status lint format test verify profile-backend dev help
+.PHONY: setup node-setup infra-up infra-down infra-logs temporal-dev db-migrate db-seed db-verify backend pipeline pipeline-worker jobs mock livekit dev-up dev-down dev-status lint format test verify review-end-2-end profile-backend dev help
 
 help:
 	@echo "Available targets:"
@@ -26,7 +26,8 @@ help:
 	@echo "  make lint         - run Ruff lint checks"
 	@echo "  make format       - run Ruff formatting"
 	@echo "  make test         - run pytest"
-	@echo "  make verify       - run lint and tests together"
+	@echo "  make verify       - run frontend, lint, and pytest verification"
+	@echo "  make review-end-2-end - run repo-wide verification baseline plus Playwright e2e"
 	@echo "  make profile-backend - run the seeded backend API latency profile"
 	@echo "  make dev          - print the recommended local startup order"
 
@@ -94,8 +95,13 @@ test:
 	$(UV) run pytest
 
 verify:
+	npm run check
 	$(MAKE) lint
 	$(MAKE) test
+
+review-end-2-end:
+	$(MAKE) verify
+	npm run test:e2e
 
 profile-backend:
 	$(UV) run --project backend python backend/scripts/profile_api_latency.py

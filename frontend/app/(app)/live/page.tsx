@@ -21,7 +21,6 @@ import {
   type LiveTestSessionUpdatePayload,
 } from "@/lib/live-session";
 import { useMockApp } from "@/lib/mock-app";
-import type { Agent } from "@/lib/mock-data";
 import { getProviderLabel, parsePhoneNumbers } from "@/lib/voice-stack";
 
 type SessionStatus = "idle" | "preparing" | "connecting" | "connected" | "error";
@@ -40,6 +39,8 @@ type TranscriptTurn = {
 };
 
 type ParticipantActivity = "you" | "agent" | null;
+
+type ParticipantConnectionTone = "neutral" | "warning" | "success";
 
 type PersistedEvent = NonNullable<LiveTestSessionUpdatePayload["append_events"]>[number];
 
@@ -70,6 +71,11 @@ function statusLabel(status: SessionStatus) {
     default:
       return "Ready";
   }
+}
+
+function hasSavedCredential(account: { configKeys?: string[] } | undefined) {
+  const keys = account?.configKeys ?? [];
+  return keys.includes("api_key") || keys.includes("api_key_ref");
 }
 
 function nowLabel() {
@@ -108,34 +114,6 @@ function formatDuration(startedAt: string | null, endedAt?: string) {
   return `${minutes}:${seconds}`;
 }
 
-function buildWorkflowPrompt(agent: Agent) {
-  const stateInstructions = agent.flowNodes
-    .map((node) => {
-      const transitions = agent.flowEdges
-        .filter((edge) => edge.sourceId === node.id)
-        .map((edge) => {
-          const target = agent.flowNodes.find((candidate) => candidate.id === edge.targetId);
-          return `${edge.label || "Transition"} -> ${target?.label || edge.targetId}: ${edge.condition || "Use the configured next state when appropriate."}`;
-        });
-
-      return [
-        `State: ${node.label}`,
-        `Objective: ${node.state}`,
-        `Prompt: ${node.prompt}`,
-        transitions.length ? `Transitions:\n${transitions.map((line) => `- ${line}`).join("\n")}` : "Transitions:\n- End or hold the conversation when no transition applies.",
-      ].join("\n");
-    })
-    .join("\n\n");
-
-  return [
-    agent.sharedPrompt,
-    agent.description ? `Workflow purpose: ${agent.description}` : "",
-    stateInstructions ? `Workflow states:\n${stateInstructions}` : "",
-  ]
-    .filter(Boolean)
-    .join("\n\n");
-}
-
 function buildWaveBars(active: boolean) {
   const idleHeights = [12, 18, 14, 22, 12, 16, 10, 20, 14, 18];
   const activeHeights = [20, 34, 24, 42, 18, 30, 20, 38, 24, 32];
@@ -161,11 +139,15 @@ function ParticipantMeter({
   icon,
   label,
   sublabel,
+  statusLabel,
+  statusTone = "neutral",
 }: {
   active: boolean;
   icon: "agent" | "you";
   label: string;
   sublabel: string;
+  statusLabel: string;
+  statusTone?: ParticipantConnectionTone;
 }) {
   return (
     <div
@@ -189,7 +171,7 @@ function ParticipantMeter({
             <p className="mt-1 text-xs text-[#6D6D78]">{sublabel}</p>
           </div>
         </div>
-        <Badge tone={active ? "success" : "neutral"}>{active ? "Speaking" : "Waiting"}</Badge>
+        <Badge tone={active ? "success" : statusTone}>{active ? "Speaking" : statusLabel}</Badge>
       </div>
 
       <div className="mt-5">{buildWaveBars(active)}</div>
@@ -215,6 +197,9 @@ export default function LivePage() {
   const [transcript, setTranscript] = useState<TranscriptTurn[]>([]);
   const [sessionRecord, setSessionRecord] = useState<LiveTestSessionRecord | null>(null);
   const [activeSpeaker, setActiveSpeaker] = useState<ParticipantActivity>(null);
+  const [microphonePublished, setMicrophonePublished] = useState(false);
+  const [agentParticipantConnected, setAgentParticipantConnected] = useState(false);
+  const [remoteAudioSubscribed, setRemoteAudioSubscribed] = useState(false);
   const [, setClockTick] = useState(0);
 
   const audioHostRef = useRef<HTMLDivElement | null>(null);
@@ -253,6 +238,26 @@ export default function LivePage() {
     ? `${selectedAgent.stack.stt} -> ${selectedAgent.stack.llm} -> ${selectedAgent.stack.tts}`
     : "";
   const effectiveDuration = formatDuration(startedAtRef.current, sessionRecord?.ended_at || undefined);
+  const localParticipantStatus =
+    activeSpeaker === "you"
+      ? { label: "Speaking", tone: "success" as const }
+      : microphonePublished
+        ? { label: "Mic live", tone: "success" as const }
+        : status === "connected"
+          ? { label: "Connected", tone: "success" as const }
+          : status === "connecting" || status === "preparing"
+            ? { label: "Connecting", tone: "warning" as const }
+            : { label: "Waiting", tone: "neutral" as const };
+  const agentParticipantStatus =
+    activeSpeaker === "agent"
+      ? { label: "Speaking", tone: "success" as const }
+      : remoteAudioSubscribed
+        ? { label: "Audio live", tone: "success" as const }
+        : agentParticipantConnected
+          ? { label: "Connected", tone: "success" as const }
+          : status === "connecting" || status === "preparing"
+            ? { label: "Joining", tone: "warning" as const }
+            : { label: "Waiting", tone: "neutral" as const };
 
   useEffect(() => {
     statusRef.current = status;
@@ -280,21 +285,21 @@ export default function LivePage() {
     () => [
       {
         label: "STT",
-        ready: Boolean(sttAccount?.preview.api_key),
+        ready: hasSavedCredential(sttAccount),
         detail: sttAccount
           ? `${getProviderLabel("stt", sttAccount.vendorName)} connected`
           : "Bind an STT connection in agent runtime",
       },
       {
         label: "LLM",
-        ready: Boolean(llmAccount?.preview.api_key),
+        ready: hasSavedCredential(llmAccount),
         detail: llmAccount
           ? `${getProviderLabel("llm", llmAccount.vendorName)} connected`
           : "Bind an LLM connection in agent runtime",
       },
       {
         label: "TTS",
-        ready: Boolean(ttsAccount?.preview.api_key),
+        ready: hasSavedCredential(ttsAccount),
         detail: ttsAccount
           ? `${getProviderLabel("tts", ttsAccount.vendorName)} connected`
           : "Bind a TTS connection in agent runtime",
@@ -342,6 +347,9 @@ export default function LivePage() {
     setTranscript([]);
     setSessionRecord(null);
     setActiveSpeaker(null);
+    setMicrophonePublished(false);
+    setAgentParticipantConnected(false);
+    setRemoteAudioSubscribed(false);
     eventCountRef.current = 0;
     detailsRef.current = null;
     callIdRef.current = null;
@@ -545,9 +553,15 @@ export default function LivePage() {
         }
         setStatus("idle");
         setActiveSpeaker(null);
+        setMicrophonePublished(false);
+        setAgentParticipantConnected(false);
+        setRemoteAudioSubscribed(false);
         pushEvent("LiveKit room closed.", "room_disconnected");
       })
       .on(RoomEvent.ParticipantConnected, (participant) => {
+        if (participant.identity !== room.localParticipant.identity) {
+          setAgentParticipantConnected(true);
+        }
         pushEvent(`${participant.identity} joined the room.`, "participant_connected", {
           participant_identity: participant.identity,
         });
@@ -556,6 +570,8 @@ export default function LivePage() {
         if (track.kind !== Track.Kind.Audio || !audioHostRef.current) {
           return;
         }
+        setAgentParticipantConnected(true);
+        setRemoteAudioSubscribed(true);
         const element = track.attach();
         element.autoplay = true;
         element.className = "hidden";
@@ -579,7 +595,7 @@ export default function LivePage() {
       setError("Select an agent before joining the live room.");
       return;
     }
-    if (!sttAccount?.preview.api_key || !llmAccount?.preview.api_key || !ttsAccount?.preview.api_key) {
+    if (!hasSavedCredential(sttAccount) || !hasSavedCredential(llmAccount) || !hasSavedCredential(ttsAccount)) {
       setStatus("error");
       setError("Finish the STT, LLM, and TTS connections in the agent runtime before launch.");
       return;
@@ -594,34 +610,7 @@ export default function LivePage() {
 
       const session = await createBrowserRtcSession(tenantSlug, workspaceId, {
         agent_id: selectedAgent.id,
-        prompt: {
-          system_prompt: buildWorkflowPrompt(selectedAgent),
-          opening_message: selectedAgent.runtimeProfile.prompt.openingMessage,
-        },
-        stt: {
-          api_key: String(sttAccount.preview.api_key),
-          model: String(selectedAgent.runtimeProfile.stt.model || "flux-general-en"),
-          language: String(selectedAgent.runtimeProfile.stt.language || "en-US"),
-          keyterms: String(selectedAgent.runtimeProfile.stt.keyterms || "")
-            .split(",")
-            .map((item) => item.trim())
-            .filter(Boolean),
-        },
-        llm: {
-          api_key: String(llmAccount.preview.api_key),
-          model: String(selectedAgent.runtimeProfile.llm.model || "gpt-4.1-mini"),
-          temperature: Number(selectedAgent.runtimeProfile.llm.temperature ?? 0.2),
-        },
-        tts: {
-          api_key: String(ttsAccount.preview.api_key),
-          model: String(selectedAgent.runtimeProfile.tts.model || "sonic-3"),
-          voice: String(selectedAgent.runtimeProfile.tts.voiceId || ""),
-          language: String(selectedAgent.runtimeProfile.tts.language || "en"),
-          speed: Number(selectedAgent.runtimeProfile.tts.speed ?? 1),
-          emotion: String(selectedAgent.runtimeProfile.tts.emotion || "neutral"),
-          volume: Number(selectedAgent.runtimeProfile.tts.volume ?? 1),
-          sample_rate: Number(selectedAgent.runtimeProfile.workflow.sampleRate ?? 24000),
-        },
+        participant_name: currentUser?.displayName ?? "Voice User",
         metadata: {
           workspace: workspaceId,
           launched_by: currentUser?.email ?? "voice-user",
@@ -656,6 +645,7 @@ export default function LivePage() {
       bindRoomEvents(room);
       await room.connect(session.server_url, session.access_token);
       await room.localParticipant.setMicrophoneEnabled(true);
+      setMicrophonePublished(true);
       pulseSpeaker("you");
       pushEvent("Microphone published to the room.", "microphone_published");
     } catch (sessionError) {
@@ -756,12 +746,16 @@ export default function LivePage() {
                   icon="you"
                   label={currentUser?.displayName || "You"}
                   sublabel="Browser microphone"
+                  statusLabel={status === "connecting" ? "Connecting" : "Waiting"}
+                  statusTone={status === "connecting" ? "warning" : "neutral"}
                 />
                 <ParticipantMeter
                   active={status === "preparing" || status === "connecting"}
                   icon="agent"
                   label={selectedAgent?.name || "Voice"}
                   sublabel="Agent runtime"
+                  statusLabel={status === "preparing" || status === "connecting" ? "Starting" : "Waiting"}
+                  statusTone={status === "preparing" || status === "connecting" ? "warning" : "neutral"}
                 />
               </div>
             </div>
@@ -809,12 +803,16 @@ export default function LivePage() {
                     icon="you"
                     label={currentUser?.displayName || "You"}
                     sublabel="Local participant"
+                    statusLabel={localParticipantStatus.label}
+                    statusTone={localParticipantStatus.tone}
                   />
                   <ParticipantMeter
                     active={activeSpeaker === "agent"}
                     icon="agent"
                     label={selectedAgent?.name || "Voice"}
                     sublabel="Agent runtime"
+                    statusLabel={agentParticipantStatus.label}
+                    statusTone={agentParticipantStatus.tone}
                   />
                 </div>
 
@@ -880,6 +878,24 @@ export default function LivePage() {
                       </div>
 
                       <div className="mt-5 space-y-3">
+                        <div className="rounded-2xl border border-border bg-[#FAFAFD] px-4 py-3">
+                          <p className="text-xs uppercase tracking-[0.16em] text-[#8F8FA3]">Transport</p>
+                          <p className="mt-1 text-sm font-medium text-[#17171F]">
+                            {status === "connected" ? "LiveKit WebRTC connected" : "Not connected"}
+                          </p>
+                        </div>
+                        <div className="rounded-2xl border border-border bg-[#FAFAFD] px-4 py-3">
+                          <p className="text-xs uppercase tracking-[0.16em] text-[#8F8FA3]">Microphone</p>
+                          <p className="mt-1 text-sm font-medium text-[#17171F]">
+                            {microphonePublished ? "Published to room" : "Not published"}
+                          </p>
+                        </div>
+                        <div className="rounded-2xl border border-border bg-[#FAFAFD] px-4 py-3">
+                          <p className="text-xs uppercase tracking-[0.16em] text-[#8F8FA3]">Remote audio</p>
+                          <p className="mt-1 text-sm font-medium text-[#17171F]">
+                            {remoteAudioSubscribed ? "Subscribed from agent" : "Waiting for agent audio track"}
+                          </p>
+                        </div>
                         <div className="rounded-2xl border border-border bg-[#FAFAFD] px-4 py-3">
                           <p className="text-xs uppercase tracking-[0.16em] text-[#8F8FA3]">Participant</p>
                           <p className="mt-1 text-sm font-medium text-[#17171F]">

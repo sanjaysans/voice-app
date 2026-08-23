@@ -18,7 +18,8 @@
     "test:frontend": "npm --workspace frontend run test",
     "typecheck:frontend": "npm --workspace frontend run typecheck",
     "test:e2e": "playwright test",
-    "check": "npm run typecheck:frontend && npm run test:frontend && npm run build"
+    "check": "npm run typecheck:frontend && npm run test:frontend && npm run build",
+    "review:end-to-end": "make review-end-2-end"
   },
   "devDependencies": {
     "@playwright/test": "^1.55.0"

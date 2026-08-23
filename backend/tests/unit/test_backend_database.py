@@ -24,8 +24,8 @@ def test_create_session_factory_supports_postgres_urls() -> None:
 
 
 def test_session_factory_is_reused_for_same_database_url() -> None:
-    factory_one = _create_session_factory("sqlite+pysqlite:///:memory:")
-    factory_two = _create_session_factory("sqlite+pysqlite:///:memory:")
+    factory_one = _create_session_factory("sqlite+pysqlite:///:memory:", pool_pre_ping=False)
+    factory_two = _create_session_factory("sqlite+pysqlite:///:memory:", pool_pre_ping=False)
 
     assert factory_one is factory_two
 
