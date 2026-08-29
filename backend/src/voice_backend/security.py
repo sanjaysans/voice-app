@@ -65,7 +65,9 @@ def create_session_token(
     return f"{payload_segment}.{signature_segment}"
 
 
-def decode_session_token(token: str, *, secret: str, now: int | None = None) -> SessionPayload | None:
+def decode_session_token(
+    token: str, *, secret: str, now: int | None = None
+) -> SessionPayload | None:
     try:
         payload_segment, signature_segment = token.split(".", 1)
     except ValueError:

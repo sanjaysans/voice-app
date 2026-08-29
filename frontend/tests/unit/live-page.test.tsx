@@ -1,7 +1,7 @@
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import LivePage from "@/app/(app)/live/page";
 import { buildDefaultRuntimeProfile } from "@/lib/voice-stack";
 
@@ -133,6 +133,8 @@ function buildMockContext() {
 }
 
 describe("LivePage", () => {
+  afterEach(cleanup);
+
   beforeEach(() => {
     mockCreateBrowserRtcSession.mockReset();
     mockUpdateLiveTestSession.mockReset();
@@ -167,7 +169,7 @@ describe("LivePage", () => {
   it("shows a missing-runtime error when a required connection is not bound", async () => {
     const user = userEvent.setup();
     const current = buildMockContext();
-    mockUseMockApp.mockReturnValueOnce({
+    mockUseMockApp.mockReturnValue({
       ...current,
       selectedAgent: {
         ...current.selectedAgent,
@@ -176,6 +178,7 @@ describe("LivePage", () => {
           llm: { ...buildMockRuntime().llm, providerAccountId: "" },
         },
       },
+      providerAccounts: current.providerAccounts.filter((account) => account.id !== "llm-1"),
     });
     render(<LivePage />);
 

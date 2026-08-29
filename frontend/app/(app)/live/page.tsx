@@ -13,7 +13,7 @@ import {
   UserRound,
   Volume2,
 } from "lucide-react";
-import { Badge, Button, Card, EmptyState, PageHeader, Select } from "@/components/ui";
+import { Badge, Button, Card, EmptyState, Input, PageHeader, Select } from "@/components/ui";
 import {
   createBrowserRtcSession,
   updateLiveTestSession,
@@ -200,6 +200,7 @@ export default function LivePage() {
   const [microphonePublished, setMicrophonePublished] = useState(false);
   const [agentParticipantConnected, setAgentParticipantConnected] = useState(false);
   const [remoteAudioSubscribed, setRemoteAudioSubscribed] = useState(false);
+  const [variableInputs, setVariableInputs] = useState<Record<string, string>>({});
   const [, setClockTick] = useState(0);
 
   const audioHostRef = useRef<HTMLDivElement | null>(null);
@@ -266,6 +267,17 @@ export default function LivePage() {
   useEffect(() => {
     agentNameRef.current = selectedAgent?.name || "";
   }, [selectedAgent?.name]);
+
+  useEffect(() => {
+    setVariableInputs(
+      Object.fromEntries(
+        (selectedAgent?.variables ?? []).map((variable) => [
+          variable.key,
+          variable.defaultValue === undefined ? "" : String(variable.defaultValue),
+        ])
+      )
+    );
+  }, [selectedAgentId, selectedAgent?.variables]);
 
   useEffect(() => {
     if (status !== "connected") {
@@ -601,6 +613,21 @@ export default function LivePage() {
       return;
     }
 
+    const missingVariables = (selectedAgent.variables ?? [])
+      .filter((variable) => variable.required && !variableInputs[variable.key]?.trim())
+      .map((variable) => variable.label);
+    if (missingVariables.length) {
+      setStatus("error");
+      setError(`Enter the required call variables: ${missingVariables.join(", ")}.`);
+      return;
+    }
+
+    const variables = Object.fromEntries(
+      (selectedAgent.variables ?? [])
+        .filter((variable) => variableInputs[variable.key]?.trim())
+        .map((variable) => [variable.key, variableInputs[variable.key]])
+    );
+
     try {
       if (roomRef.current) {
         await disconnectRoom();
@@ -619,6 +646,7 @@ export default function LivePage() {
           vendor_trace: vendorTrace,
           launch_number: selectedPhoneNumber || parsePhoneNumbers(telephonyAccount?.preview.phone_numbers)[0] || "browser-live",
         },
+        variables,
       });
 
       callIdRef.current = session.call_id;
@@ -710,7 +738,7 @@ export default function LivePage() {
       />
 
       {isConnecting ? (
-        <Card className="mx-auto max-w-4xl overflow-hidden p-0">
+        <Card className="w-full overflow-hidden p-0">
           <div className="border-b border-border bg-[linear-gradient(135deg,rgba(102,89,255,0.12),rgba(139,127,255,0.04))] px-8 py-7">
             <div className="flex items-center justify-between gap-4">
               <div>
@@ -1007,7 +1035,7 @@ export default function LivePage() {
           </div>
         </div>
       ) : (
-        <Card className="mx-auto max-w-4xl overflow-hidden p-0">
+        <Card className="w-full overflow-hidden p-0">
           <div className="border-b border-border bg-[linear-gradient(135deg,rgba(102,89,255,0.10),rgba(139,127,255,0.02))] px-8 py-7">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div>
@@ -1065,6 +1093,70 @@ export default function LivePage() {
                   </div>
                 ))}
               </div>
+
+              {(selectedAgent?.variables ?? []).length ? (
+                <div className="rounded-2xl border border-border bg-[#fafafe] p-4">
+                  <div>
+                    <h3 className="font-medium text-[#17171F]">Call variables</h3>
+                    <p className="mt-1 text-sm leading-6 text-[#6D6D78]">
+                      Supply the context this test call should use. Required values must be set before joining.
+                    </p>
+                  </div>
+                  <div className="mt-4 grid gap-4 md:grid-cols-2">
+                    {(selectedAgent?.variables ?? []).map((variable) => {
+                      const value = variableInputs[variable.key] ?? "";
+                      if (variable.dataType === "enum") {
+                        return (
+                          <Select
+                            key={variable.key}
+                            label={`${variable.label}${variable.required ? " *" : ""}`}
+                            options={variable.options}
+                            placeholder={`Select ${variable.label.toLowerCase()}`}
+                            value={value}
+                            onChange={(event) =>
+                              setVariableInputs((current) => ({ ...current, [variable.key]: event.target.value }))
+                            }
+                          />
+                        );
+                      }
+                      if (variable.dataType === "boolean") {
+                        return (
+                          <Select
+                            key={variable.key}
+                            label={`${variable.label}${variable.required ? " *" : ""}`}
+                            options={[{ label: "Yes", value: "true" }, { label: "No", value: "false" }]}
+                            placeholder={`Select ${variable.label.toLowerCase()}`}
+                            value={value}
+                            onChange={(event) =>
+                              setVariableInputs((current) => ({ ...current, [variable.key]: event.target.value }))
+                            }
+                          />
+                        );
+                      }
+                      return (
+                        <Input
+                          key={variable.key}
+                          label={`${variable.label}${variable.required ? " *" : ""}`}
+                          type={
+                            variable.dataType === "number"
+                              ? "number"
+                              : variable.dataType === "date"
+                                ? "date"
+                                : variable.dataType === "datetime"
+                                  ? "datetime-local"
+                                  : "text"
+                          }
+                          placeholder={variable.description || `Enter ${variable.label.toLowerCase()}`}
+                          value={value}
+                          onChange={(event) =>
+                            setVariableInputs((current) => ({ ...current, [variable.key]: event.target.value }))
+                          }
+                        />
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
 
               {error ? (
                 <div className="flex items-start gap-3 rounded-2xl border border-[rgba(220,38,38,0.16)] bg-[rgba(220,38,38,0.08)] px-4 py-3 text-sm text-danger">

@@ -22,7 +22,13 @@ class CallHistoryService:
         *,
         tenant_id=None,
     ) -> list[CallSummary] | None:
-        cache_key = ("call-history.recent", tenant_slug, str(workspace_id), str(limit), str(tenant_id or ""))
+        cache_key = (
+            "call-history.recent",
+            tenant_slug,
+            str(workspace_id),
+            str(limit),
+            str(tenant_id or ""),
+        )
         cached = get_read_cache(cache_key)
         if cached is not None:
             return cached
@@ -38,7 +44,9 @@ class CallHistoryService:
             return None
 
         items: list[CallSummary] = []
-        for call in self.calls.list_recent_by_workspace(resolved_tenant_id, workspace_id, limit=limit):
+        for call in self.calls.list_recent_by_workspace(
+            resolved_tenant_id, workspace_id, limit=limit
+        ):
             agent_name = None
             if call.agent_version and call.agent_version.agent_definition:
                 agent_name = call.agent_version.agent_definition.name

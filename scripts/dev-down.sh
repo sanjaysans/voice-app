@@ -9,6 +9,7 @@ service_names=(
   "frontend"
   "jobs"
   "pipeline-worker"
+  "pipeline-eval-caller"
   "pipeline"
   "backend"
   "livekit"
@@ -21,6 +22,7 @@ service_pattern() {
     backend) echo "uvicorn voice_backend.app:create_app --factory --host 0.0.0.0 --port 8100" ;;
     pipeline) echo "uvicorn voice_pipeline.app:create_app --factory --host 0.0.0.0 --port 8101" ;;
     pipeline-worker) echo "voice-pipeline-worker dev" ;;
+    pipeline-eval-caller) echo "voice-pipeline-eval-caller dev" ;;
     jobs) echo "uvicorn voice_jobs.app:create_app --factory --host 0.0.0.0 --port 8200" ;;
     frontend) echo "$ROOT_DIR/node_modules/.bin/next dev" ;;
     *) return 1 ;;
@@ -45,6 +47,10 @@ stop_service() {
   fi
 
   pattern="$(service_pattern "$name")" || return 1
+
+  if [[ "$name" == "backend" ]]; then
+    pattern="voice-backend-dev|$pattern"
+  fi
 
   while IFS= read -r pid; do
     [[ -n "$pid" ]] || continue

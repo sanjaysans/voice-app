@@ -24,6 +24,8 @@ class CallRepository:
         from_number: str | None = None,
         to_number: str | None = None,
         resolved_config: dict[str, object] | None = None,
+        started_at=None,
+        ended_at=None,
     ) -> Call:
         call = Call(
             tenant_id=tenant_id,
@@ -35,6 +37,8 @@ class CallRepository:
             from_number=from_number,
             to_number=to_number,
             resolved_config=resolved_config or {},
+            started_at=started_at,
+            ended_at=ended_at,
         )
         self.session.add(call)
         self.session.flush()
@@ -161,11 +165,7 @@ class CallRepository:
         ]
         if not include_tests:
             filters.append(Call.is_test.is_(False))
-        statement = (
-            select(func.count())
-            .select_from(Call)
-            .where(*filters)
-        )
+        statement = select(func.count()).select_from(Call).where(*filters)
         return int(self.session.scalar(statement) or 0)
 
     def count_all_by_tenant(self, tenant_id, *, include_tests: bool = False) -> int:

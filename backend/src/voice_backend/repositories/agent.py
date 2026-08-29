@@ -84,7 +84,9 @@ class AgentRepository:
         latest_version_number = self.session.scalar(statement)
         return int(latest_version_number or 0) + 1
 
-    def get_definition_for_update(self, tenant_id, workspace_id, agent_definition_id) -> AgentDefinition | None:
+    def get_definition_for_update(
+        self, tenant_id, workspace_id, agent_definition_id
+    ) -> AgentDefinition | None:
         statement = (
             select(AgentDefinition)
             .where(

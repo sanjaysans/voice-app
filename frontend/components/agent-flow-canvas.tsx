@@ -10,6 +10,7 @@ type BuilderNode = {
   x: number;
   y: number;
   tone: "neutral" | "success" | "warning";
+  nodeType?: "state" | "end_call";
   state: string;
 };
 
@@ -72,6 +73,38 @@ export function autoArrangeFlowNodes<T extends BuilderNode>(nodes: T[], edges: F
     }));
   }
 
+  const layoutEdges: FlowEdge[] = [];
+  const layoutAdjacency = new Map<string, string[]>();
+
+  for (const node of nodes) {
+    layoutAdjacency.set(node.id, []);
+  }
+
+  function reaches(startId: string, targetId: string) {
+    const queue = [startId];
+    const visited = new Set<string>();
+    while (queue.length) {
+      const currentId = queue.shift() as string;
+      if (currentId === targetId) {
+        return true;
+      }
+      if (visited.has(currentId)) {
+        continue;
+      }
+      visited.add(currentId);
+      queue.push(...(layoutAdjacency.get(currentId) ?? []));
+    }
+    return false;
+  }
+
+  for (const edge of validEdges) {
+    if (edge.sourceId === edge.targetId || reaches(edge.targetId, edge.sourceId)) {
+      continue;
+    }
+    layoutEdges.push(edge);
+    layoutAdjacency.get(edge.sourceId)?.push(edge.targetId);
+  }
+
   const incomingByNode = new Map<string, string[]>();
   const outgoingByNode = new Map<string, string[]>();
   const indegree = new Map<string, number>();
@@ -84,7 +117,7 @@ export function autoArrangeFlowNodes<T extends BuilderNode>(nodes: T[], edges: F
     depth.set(node.id, 0);
   }
 
-  for (const edge of validEdges) {
+  for (const edge of layoutEdges) {
     incomingByNode.get(edge.targetId)?.push(edge.sourceId);
     outgoingByNode.get(edge.sourceId)?.push(edge.targetId);
     indegree.set(edge.targetId, (indegree.get(edge.targetId) ?? 0) + 1);
@@ -256,6 +289,22 @@ function buildEdgeRoute(
 ) {
   const sourceY = source.centerY + edgeOffset(sourceIndex, sourceTotal);
   const targetY = target.centerY + edgeOffset(targetIndex, targetTotal);
+  const isBackEdge = target.centerY < source.centerY - NODE_HEIGHT / 2;
+
+  if (isBackEdge) {
+    const laneX = Math.max(source.right, target.right) + 56 + Math.max(sourceIndex, targetIndex) * 24;
+    return {
+      path: roundedPolyline([
+        { x: source.right, y: sourceY },
+        { x: laneX, y: sourceY },
+        { x: laneX, y: targetY },
+        { x: target.right, y: targetY },
+      ]),
+      labelX: laneX,
+      labelY: (sourceY + targetY) / 2 - 10,
+    };
+  }
+
   const dx = target.centerX - source.centerX;
   const dy = targetY - sourceY;
   const isHorizontal = Math.abs(dx) >= Math.abs(dy);
@@ -495,7 +544,9 @@ export function AgentFlowCanvas({
             key={node.id}
             className={cn(
               "absolute w-[220px] cursor-grab rounded-2xl border bg-white p-4 text-left shadow-sm transition active:cursor-grabbing",
-              selectedId === node.id
+              node.nodeType === "end_call"
+                ? "border-[rgba(217,119,6,0.3)] bg-[rgba(217,119,6,0.06)]"
+                : selectedId === node.id
                 ? "border-[rgba(102,89,255,0.35)] bg-[rgba(102,89,255,0.08)] shadow-surface"
                 : "border-border hover:border-[rgba(102,89,255,0.2)]"
             )}
@@ -525,7 +576,13 @@ export function AgentFlowCanvas({
             type="button"
           >
             <p className="text-xs uppercase tracking-[0.16em] text-[#6D6D78]">
-              {node.id === "router" ? "Router" : node.id === "escalation" ? "Human handoff" : "Workflow step"}
+              {node.nodeType === "end_call"
+                ? "Terminal"
+                : node.id === "router"
+                  ? "Router"
+                  : node.id === "escalation"
+                    ? "Human handoff"
+                    : "Workflow step"}
             </p>
             <h3 className="mt-2 text-base font-semibold">{node.label}</h3>
             <p className="mt-3 text-sm text-[#6D6D78]">{node.state}</p>

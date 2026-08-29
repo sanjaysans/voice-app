@@ -19,6 +19,7 @@ import {
   getTimeLabel,
   type ActiveCall,
   type Agent,
+  type AgentVariable,
   type FlowEdge,
   type CallRecord,
   type Connection,
@@ -28,6 +29,7 @@ import {
 import { ApiError, api } from "@/lib/api-client";
 import {
   getProviderLabel,
+  buildDefaultRuntimeProfile,
   mergeRuntimeProfile,
   parsePhoneNumbers,
   resolveProviderHealthCheckEndpoint,
@@ -38,7 +40,7 @@ import {
 import { Button } from "@/components/ui";
 
 type CallsView = "launch" | "live";
-type RouteDataScope = "light" | "providers" | "full";
+type RouteDataScope = "light" | "agents" | "providers" | "full";
 
 type MockAppContextValue = {
   currentUser: {
@@ -144,7 +146,7 @@ type AgentStudioResponse = {
   segment: string;
   goal: string;
   stack: Agent["stack"];
-  flow_nodes: Agent["flowNodes"];
+  flow_nodes: Array<Omit<Agent["flowNodes"][number], "nodeType"> & { node_type?: "state" | "end_call" }>;
   flow_edges: Array<{
     id: string;
     source_id: string;
@@ -157,6 +159,25 @@ type AgentStudioResponse = {
   latest_version_number: number | null;
   latest_pipeline_mode: string | null;
   runtime_profile?: AgentRuntimeProfile;
+  variables?: Array<{
+    key: string;
+    label: string;
+    description: string;
+    data_type: AgentVariable["dataType"];
+    required: boolean;
+    default_value?: string | number | boolean | null;
+    options: string[];
+  }>;
+};
+
+type AgentSummaryResponse = {
+  agent_id: string;
+  workspace_id: string;
+  agent_key: string;
+  name: string;
+  status: string;
+  latest_version_number: number | null;
+  latest_pipeline_mode: string | null;
 };
 
 type ProviderAccountResponse = {
@@ -230,8 +251,9 @@ type SessionResponse = {
 const MockAppContext = createContext<MockAppContextValue | null>(null);
 const routeDataScopeRank: Record<RouteDataScope, number> = {
   light: 0,
-  providers: 1,
-  full: 2,
+  agents: 1,
+  providers: 2,
+  full: 3,
 };
 
 function getRouteDataScope(pathname: string): RouteDataScope {
@@ -242,6 +264,9 @@ function getRouteDataScope(pathname: string): RouteDataScope {
     pathname.startsWith("/compliance")
   ) {
     return "full";
+  }
+  if (pathname.startsWith("/evaluations")) {
+    return "agents";
   }
   if (pathname.startsWith("/connections")) {
     return "providers";
@@ -346,6 +371,40 @@ function fromFlowEdge(edge: FlowEdge) {
   };
 }
 
+function fromFlowNode(node: Agent["flowNodes"][number]) {
+  return {
+    ...node,
+    node_type: node.nodeType ?? "state",
+    nodeType: undefined,
+  };
+}
+
+function toAgentVariable(variable: NonNullable<AgentStudioResponse["variables"]>[number]): AgentVariable {
+  return {
+    key: variable.key,
+    label: variable.label,
+    description: variable.description,
+    dataType: variable.data_type,
+    required: variable.required,
+    ...(variable.default_value === null || variable.default_value === undefined
+      ? {}
+      : { defaultValue: variable.default_value }),
+    options: variable.options,
+  };
+}
+
+function fromAgentVariable(variable: AgentVariable) {
+  return {
+    key: variable.key,
+    label: variable.label,
+    description: variable.description,
+    data_type: variable.dataType,
+    required: variable.required,
+    default_value: variable.defaultValue ?? null,
+    options: variable.options,
+  };
+}
+
 function toAgent(response: AgentStudioResponse): Agent {
   return {
     id: response.agent_id,
@@ -358,11 +417,37 @@ function toAgent(response: AgentStudioResponse): Agent {
     segment: response.segment,
     goal: response.goal,
     stack: response.stack,
+    variables: (response.variables ?? []).map(toAgentVariable),
     runtimeProfile: mergeRuntimeProfile(response.runtime_profile),
-    flowNodes: response.flow_nodes,
+    flowNodes: response.flow_nodes.map((node) => ({
+      ...node,
+      nodeType: node.node_type ?? "state",
+    })),
     flowEdges: response.flow_edges.map(toFlowEdge),
     toolsCatalog: response.tools_catalog,
     knowledgeSources: response.knowledge_sources,
+  };
+}
+
+function toAgentSummary(response: AgentSummaryResponse): Agent {
+  const isPublished = response.status.toLowerCase() === "published";
+  return {
+    id: response.agent_id,
+    name: response.name,
+    description: "",
+    sharedPrompt: "",
+    status: isPublished ? "Published" : "Draft",
+    statusTone: isPublished ? "success" : "warning",
+    lastEdited: "",
+    segment: "",
+    goal: "",
+    stack: { stt: "", llm: "", tts: "" },
+    variables: [],
+    runtimeProfile: buildDefaultRuntimeProfile(),
+    flowNodes: [],
+    flowEdges: [],
+    toolsCatalog: [],
+    knowledgeSources: [],
   };
 }
 
@@ -523,6 +608,24 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
     });
   }
 
+  async function refreshAgents(context?: { tenantSlug: string; workspaceId: string }) {
+    const currentTenantSlug = context?.tenantSlug ?? tenantSlug;
+    const currentWorkspaceId = context?.workspaceId ?? workspaceId;
+    if (!currentTenantSlug || !currentWorkspaceId) {
+      setAgents([]);
+      setSelectedAgentId("");
+      return;
+    }
+    const state = await api<AgentSummaryResponse[]>(
+      `/api/v1/tenants/${currentTenantSlug}/workspaces/${currentWorkspaceId}/agents`
+    );
+    const nextAgents = state.map(toAgentSummary);
+    setAgents(nextAgents);
+    setSelectedAgentId((current) =>
+      nextAgents.some((agent) => agent.id === current) ? current : nextAgents[0]?.id || ""
+    );
+  }
+
   async function refreshProviderAccounts(context?: { tenantSlug: string }) {
     const currentTenantSlug = context?.tenantSlug ?? tenantSlug;
     if (!currentTenantSlug) {
@@ -563,14 +666,26 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    const requestContext = { ...context, scope };
+    hydratedScopeRef.current = requestContext;
     setIsHydratingRouteData(true);
     try {
-      if (scope === "providers") {
+      if (scope === "agents") {
+        await refreshAgents(context);
+      } else if (scope === "providers") {
         await refreshProviderAccounts({ tenantSlug: context.tenantSlug });
       } else {
         await refreshState(context);
       }
-      hydratedScopeRef.current = { ...context, scope };
+    } catch (error) {
+      if (
+        hydratedScopeRef.current?.tenantSlug === requestContext.tenantSlug &&
+        hydratedScopeRef.current?.workspaceId === requestContext.workspaceId &&
+        hydratedScopeRef.current?.scope === requestContext.scope
+      ) {
+        hydratedScopeRef.current = null;
+      }
+      throw error;
     } finally {
       setIsHydratingRouteData(false);
     }
@@ -599,10 +714,6 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
     setTenantSlug(resolved.tenantSlug);
     setWorkspaceId(resolved.workspaceId);
     setWorkspaceName(resolved.workspaceName);
-    void hydrateRouteData(routeDataScope, {
-      tenantSlug: resolved.tenantSlug,
-      workspaceId: resolved.workspaceId,
-    });
     console.info("voice.initialize.ready", resolved);
     setIsReady(true);
   }
@@ -746,9 +857,10 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
           segment: nextAgent.segment,
           goal: nextAgent.goal,
           shared_prompt: nextAgent.sharedPrompt,
+          variables: nextAgent.variables.map(fromAgentVariable),
           stack: nextAgent.stack,
           runtime_profile: nextAgent.runtimeProfile,
-          flow_nodes: nextAgent.flowNodes,
+          flow_nodes: nextAgent.flowNodes.map(fromFlowNode),
           flow_edges: nextAgent.flowEdges.map(fromFlowEdge),
           tools_catalog: nextAgent.toolsCatalog,
           knowledge_sources: nextAgent.knowledgeSources,
@@ -803,8 +915,9 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
               initial_version: {
                 pipeline_mode: "stt_llm_tts",
                 routing_config: {
-                  flow_nodes: template.flowNodes,
+                  flow_nodes: template.flowNodes.map(fromFlowNode),
                   flow_edges: template.flowEdges.map(fromFlowEdge),
+                  variables: template.variables.map(fromAgentVariable),
                 },
                 vendor_config: {
                   stack: template.stack,
@@ -822,12 +935,13 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
               name: template.name,
               description: template.description,
               shared_prompt: template.sharedPrompt,
+              variables: template.variables.map(fromAgentVariable),
               status: "draft",
               segment: template.segment,
               goal: template.goal,
               stack: template.stack,
               runtime_profile: template.runtimeProfile,
-              flow_nodes: template.flowNodes,
+              flow_nodes: template.flowNodes.map(fromFlowNode),
               flow_edges: template.flowEdges.map(fromFlowEdge),
               tools_catalog: template.toolsCatalog,
               knowledge_sources: template.knowledgeSources,

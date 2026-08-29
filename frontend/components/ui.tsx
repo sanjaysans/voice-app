@@ -451,11 +451,13 @@ export function Slider({
 export function EmptyState({
   title,
   description,
-  icon: Icon
+  icon: Icon,
+  action
 }: {
   title: string;
   description: string;
   icon?: ComponentType<{ size?: number; className?: string }>;
+  action?: ReactNode;
 }) {
   return (
     <Card className="border-dashed bg-[#fcfcff] text-center">
@@ -466,6 +468,7 @@ export function EmptyState({
       ) : null}
       <h2 className="mt-4 text-lg font-semibold">{title}</h2>
       <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-[#6D6D78]">{description}</p>
+      {action ? <div className="mt-5">{action}</div> : null}
     </Card>
   );
 }
@@ -483,19 +486,21 @@ export function Modal({
   onClose: () => void;
   children: ReactNode;
 }) {
+  const titleId = useId();
+
   if (!isOpen) {
     return null;
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(20,20,26,0.45)] p-6">
-      <div className="w-full max-w-lg rounded-[24px] border border-border bg-white p-6 shadow-[0_30px_80px_rgba(20,20,26,0.24)]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(20,20,26,0.45)] p-4 sm:p-6" role="presentation">
+      <div aria-labelledby={titleId} aria-modal="true" className="max-h-[calc(100vh-2rem)] w-full max-w-lg overflow-y-auto rounded-[24px] border border-border bg-white p-6 shadow-[0_30px_80px_rgba(20,20,26,0.24)]" role="dialog">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h2 className="text-xl font-semibold">{title}</h2>
+            <h2 className="text-xl font-semibold" id={titleId}>{title}</h2>
             <p className="mt-2 text-sm leading-6 text-[#6D6D78]">{description}</p>
           </div>
-          <button className="rounded-xl border border-border p-2 text-[#6D6D78]" onClick={onClose} type="button">
+          <button aria-label="Close dialog" className="rounded-xl border border-border p-2 text-[#6D6D78]" onClick={onClose} type="button">
             <X size={16} />
           </button>
         </div>

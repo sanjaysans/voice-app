@@ -37,7 +37,10 @@ class WorkspaceAdminService:
             resolved_tenant_id = tenant.id
         return set_read_cache(
             cache_key,
-            [_to_record(workspace) for workspace in self.workspaces.list_by_tenant(resolved_tenant_id)],
+            [
+                _to_record(workspace)
+                for workspace in self.workspaces.list_by_tenant(resolved_tenant_id)
+            ],
         )
 
     def create_workspace(

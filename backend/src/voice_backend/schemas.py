@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 TenantStatus = Literal["active", "paused", "archived"]
 AgentStatus = Literal["draft", "published", "archived"]
@@ -21,6 +21,7 @@ ProviderKind = Literal[
 ]
 PipelineMode = Literal["realtime_s2s", "stt_llm_tts", "stt_llm", "llm_tts"]
 WorkspaceRole = Literal["admin", "editor", "viewer"]
+VariableDataType = Literal["text", "number", "boolean", "date", "datetime", "enum"]
 
 
 class TenantOverview(BaseModel):
@@ -202,12 +203,62 @@ class VendorStackRecord(BaseModel):
     tts: str
 
 
+class AgentVariableDefinition(BaseModel):
+    key: str = Field(min_length=1, max_length=80, pattern=r"^[a-z][a-z0-9_]*$")
+    label: str = Field(min_length=1, max_length=120)
+    description: str = Field(default="", max_length=500)
+    data_type: VariableDataType = "text"
+    required: bool = False
+    default_value: object | None = None
+    options: list[str] = Field(default_factory=list, max_length=50)
+
+    @model_validator(mode="after")
+    def validate_options(self) -> AgentVariableDefinition:
+        self.options = [option.strip() for option in self.options if option.strip()]
+        if self.data_type == "enum":
+            if not self.options:
+                raise ValueError(f"enum variable '{self.key}' must define at least one option")
+            if len(self.options) != len(set(self.options)):
+                raise ValueError(f"enum variable '{self.key}' contains duplicate options")
+        elif self.options:
+            raise ValueError(f"variable '{self.key}' only supports options when its type is enum")
+
+        if self.default_value is not None:
+            if self.data_type == "number":
+                if isinstance(self.default_value, bool):
+                    raise ValueError(f"number variable '{self.key}' has an invalid default")
+                try:
+                    float(self.default_value)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f"number variable '{self.key}' has an invalid default"
+                    ) from exc
+            elif self.data_type == "boolean" and not isinstance(self.default_value, bool):
+                raise ValueError(f"boolean variable '{self.key}' has an invalid default")
+            elif self.data_type == "enum" and self.default_value not in self.options:
+                raise ValueError(f"variable '{self.key}' default must be one of its options")
+            elif self.data_type == "date":
+                try:
+                    date.fromisoformat(str(self.default_value))
+                except ValueError as exc:
+                    raise ValueError(f"date variable '{self.key}' has an invalid default") from exc
+            elif self.data_type == "datetime":
+                try:
+                    datetime.fromisoformat(str(self.default_value))
+                except ValueError as exc:
+                    raise ValueError(
+                        f"datetime variable '{self.key}' has an invalid default"
+                    ) from exc
+        return self
+
+
 class FlowNodeRecord(BaseModel):
     id: str
     label: str
     x: int
     y: int
     tone: Literal["neutral", "success", "warning"]
+    node_type: Literal["state", "end_call"] = "state"
     state: str
     prompt: str
     tools: list[str]
@@ -252,6 +303,7 @@ class AgentStudioRecord(BaseModel):
     goal: str
     stack: VendorStackRecord
     runtime_profile: dict[str, object] = Field(default_factory=dict)
+    variables: list[AgentVariableDefinition] = Field(default_factory=list)
     flow_nodes: list[FlowNodeRecord]
     flow_edges: list[FlowEdgeRecord]
     tools_catalog: list[AgentToolRecord]
@@ -270,11 +322,20 @@ class AgentStudioUpdateInput(BaseModel):
     goal: str | None = None
     stack: VendorStackRecord | None = None
     runtime_profile: dict[str, object] | None = None
+    variables: list[AgentVariableDefinition] | None = None
     flow_nodes: list[FlowNodeRecord] | None = None
     flow_edges: list[FlowEdgeRecord] | None = None
     tools_catalog: list[AgentToolRecord] | None = None
     knowledge_sources: list[KnowledgeSourceRecord] | None = None
     pipeline_mode: PipelineMode | None = None
+
+    @model_validator(mode="after")
+    def validate_variable_keys(self) -> AgentStudioUpdateInput:
+        if self.variables is not None:
+            keys = [variable.key for variable in self.variables]
+            if len(keys) != len(set(keys)):
+                raise ValueError("agent variables must have unique keys")
+        return self
 
 
 class ConnectionRecord(BaseModel):
@@ -325,6 +386,238 @@ class CallLogListResponse(BaseModel):
     total_pages: int
     has_previous: bool
     has_next: bool
+
+
+EvalExecutionMode = Literal[
+    "scripted_text",
+    "simulated_text",
+    "scripted_audio",
+    "simulated_audio",
+    "live_audio",
+]
+EvalSuiteStatus = Literal["draft", "active", "archived"]
+EvalRunStatus = Literal["queued", "running", "scoring", "completed", "failed", "cancelled"]
+
+
+class EvalAssertionInput(BaseModel):
+    key: str = Field(min_length=1, max_length=120)
+    type: Literal[
+        "contains",
+        "not_contains",
+        "regex",
+        "outcome",
+        "state_transition",
+        "tool_call",
+        "variable",
+        "guardrail",
+        "max_turns",
+    ]
+    expected: dict[str, object] = Field(default_factory=dict)
+    critical: bool = False
+
+
+class EvalMetricInput(BaseModel):
+    key: str = Field(min_length=1, max_length=120)
+    description: str = Field(min_length=1, max_length=500)
+    weight: float = Field(default=1.0, gt=0, le=100)
+    threshold: float = Field(default=0.7, ge=0, le=1)
+
+
+def _contains_secret_key(value: object) -> bool:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            normalized_key = str(key).casefold().replace("-", "_")
+            compact_key = normalized_key.replace("_", "")
+            if compact_key in {
+                "apikey",
+                "apisecret",
+                "password",
+                "accesstoken",
+                "authorization",
+                "clientsecret",
+                "secret",
+                "token",
+            } or normalized_key.endswith(("_password", "_secret", "_token")):
+                return True
+            if _contains_secret_key(item):
+                return True
+    elif isinstance(value, list):
+        return any(_contains_secret_key(item) for item in value)
+    return False
+
+
+class EvalCaseCreateInput(BaseModel):
+    case_key: str = Field(min_length=1, max_length=80)
+    name: str = Field(min_length=1, max_length=160)
+    scenario: dict[str, object] = Field(default_factory=dict)
+    expected_behavior: dict[str, object] = Field(default_factory=dict)
+    assertions: list[EvalAssertionInput] = Field(default_factory=list, max_length=50)
+    rubric: list[EvalMetricInput] = Field(default_factory=list, max_length=20)
+    caller_config: dict[str, object] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_case_data(self) -> EvalCaseCreateInput:
+        if any(
+            _contains_secret_key(value)
+            for value in (self.scenario, self.expected_behavior, self.caller_config)
+        ):
+            raise ValueError("evaluation case data must reference secrets, not contain them")
+        return self
+
+
+class EvalCaseUpdateInput(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    status: Literal["active", "archived"] | None = None
+    scenario: dict[str, object] | None = None
+    expected_behavior: dict[str, object] | None = None
+    assertions: list[EvalAssertionInput] | None = Field(default=None, max_length=50)
+    rubric: list[EvalMetricInput] | None = Field(default=None, max_length=20)
+    caller_config: dict[str, object] | None = None
+
+    @model_validator(mode="after")
+    def validate_case_data(self) -> EvalCaseUpdateInput:
+        if any(
+            value is not None and _contains_secret_key(value)
+            for value in (self.scenario, self.expected_behavior, self.caller_config)
+        ):
+            raise ValueError("evaluation case data must reference secrets, not contain them")
+        return self
+
+
+class EvalSuiteCreateInput(BaseModel):
+    suite_key: str = Field(min_length=1, max_length=80)
+    name: str = Field(min_length=1, max_length=160)
+    description: str = Field(default="", max_length=500)
+    agent_id: UUID
+    status: EvalSuiteStatus = "draft"
+    execution_defaults: dict[str, object] = Field(default_factory=dict)
+    cases: list[EvalCaseCreateInput] = Field(default_factory=list, max_length=100)
+
+    @model_validator(mode="after")
+    def validate_execution_defaults(self) -> EvalSuiteCreateInput:
+        if _contains_secret_key(self.execution_defaults):
+            raise ValueError("execution defaults must reference secrets, not contain them")
+        return self
+
+
+class EvalSuiteUpdateInput(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    description: str | None = Field(default=None, max_length=500)
+    status: EvalSuiteStatus | None = None
+
+
+class EvalRunCreateInput(BaseModel):
+    execution_mode: EvalExecutionMode = "scripted_text"
+    case_ids: list[UUID] | None = None
+    repeat_count: int = Field(default=1, ge=1, le=10)
+    fail_fast: bool = False
+
+
+class EvalAssertionResultRecord(BaseModel):
+    assertion_key: str
+    assertion_type: str
+    passed: bool
+    critical: bool
+    expected: dict[str, object]
+    actual: dict[str, object]
+    explanation: str
+
+
+class EvalMetricResultRecord(BaseModel):
+    metric_key: str
+    score: float
+    weight: float
+    explanation: str
+    judge_metadata: dict[str, object]
+
+
+class EvalCaseRecord(BaseModel):
+    case_id: UUID
+    suite_id: UUID
+    case_key: str
+    name: str
+    sort_order: int
+    status: str
+    version_number: int
+    scenario: dict[str, object]
+    expected_behavior: dict[str, object]
+    assertions: list[EvalAssertionInput]
+    rubric: list[EvalMetricInput]
+    caller_config: dict[str, object]
+
+
+class EvalSuiteRecord(BaseModel):
+    suite_id: UUID
+    tenant_id: UUID
+    workspace_id: UUID
+    agent_id: UUID
+    suite_key: str
+    name: str
+    description: str
+    status: EvalSuiteStatus
+    latest_version_number: int
+    agent_version_id: UUID
+    case_count: int
+    last_run_status: str | None
+    last_run_score: float | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class EvalSuiteDetailRecord(EvalSuiteRecord):
+    cases: list[EvalCaseRecord]
+
+
+class EvalCaseRunRecord(BaseModel):
+    case_run_id: UUID
+    case_id: UUID
+    case_name: str
+    call_id: UUID | None
+    status: str
+    passed: bool | None
+    score: float | None
+    failure_summary: str
+    evidence: dict[str, object]
+    assertions: list[EvalAssertionResultRecord]
+    metrics: list[EvalMetricResultRecord]
+
+
+class EvalRunRecord(BaseModel):
+    run_id: UUID
+    suite_id: UUID
+    suite_version_id: UUID
+    execution_mode: EvalExecutionMode
+    status: EvalRunStatus
+    total_cases: int
+    passed_cases: int
+    failed_cases: int
+    score: float | None
+    summary: str
+    created_at: datetime
+    started_at: datetime | None
+    ended_at: datetime | None
+    case_runs: list[EvalCaseRunRecord]
+
+
+class EvalRunSummaryRecord(BaseModel):
+    run_id: UUID
+    suite_id: UUID
+    suite_version_id: UUID
+    execution_mode: EvalExecutionMode
+    status: EvalRunStatus
+    total_cases: int
+    passed_cases: int
+    failed_cases: int
+    score: float | None
+    summary: str
+    created_at: datetime
+
+
+class EvalCaseResultInput(BaseModel):
+    execution_id: str = Field(min_length=1, max_length=160)
+    evidence: dict[str, object] = Field(default_factory=dict)
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
 
 
 class LiveTestSessionEventInput(BaseModel):
@@ -386,7 +679,9 @@ class CallReviewUpdateInput(BaseModel):
 
 
 class LiveTestSessionUpdateInput(BaseModel):
-    lifecycle_status: Literal["queued", "in_progress", "completed", "failed", "cancelled"] | None = None
+    lifecycle_status: (
+        Literal["queued", "in_progress", "completed", "failed", "cancelled"] | None
+    ) = None
     display_status: Literal["Completed", "Follow-up", "Dropped"] | None = None
     summary: str | None = None
     outcome: str | None = None
@@ -488,6 +783,7 @@ class BrowserRtcSessionCreateInput(BaseModel):
     room: BrowserRtcRoomInput = Field(default_factory=BrowserRtcRoomInput)
     vad: BrowserRtcVadInput = Field(default_factory=BrowserRtcVadInput)
     metadata: dict[str, str] = Field(default_factory=dict)
+    variables: dict[str, object] = Field(default_factory=dict)
     participant_name: str | None = None
 
 
@@ -503,6 +799,8 @@ class BrowserRtcSessionResolvedInput(BaseModel):
     tts: BrowserRtcCartesiaInput
     vad: BrowserRtcVadInput = Field(default_factory=BrowserRtcVadInput)
     metadata: dict[str, str] = Field(default_factory=dict)
+    variables: dict[str, object] = Field(default_factory=dict)
+    workflow: dict[str, object] = Field(default_factory=dict)
     participant_name: str | None = None
 
 

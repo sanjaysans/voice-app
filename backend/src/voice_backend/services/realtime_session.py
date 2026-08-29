@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import ssl
+from contextlib import asynccontextmanager
 from datetime import timedelta
 from uuid import UUID, uuid4
 
+import aiohttp
+import certifi
 import httpx
 from livekit.api import AccessToken, LiveKitAPI, VideoGrants
 from livekit.protocol.agent_dispatch import CreateAgentDispatchRequest
@@ -78,11 +82,7 @@ class RealtimeSessionService:
     async def cleanup_browser_session(self, *, room_name: str, dispatch_id: str | None) -> None:
         if not room_name:
             return
-        async with LiveKitAPI(
-            url=self._settings.livekit_url,
-            api_key=self._settings.livekit_api_key,
-            api_secret=self._settings.livekit_api_secret,
-        ) as livekit_api:
+        async with self._livekit_api() as livekit_api:
             if dispatch_id:
                 try:
                     await livekit_api.agent_dispatch.delete_dispatch(dispatch_id, room_name)
@@ -92,6 +92,47 @@ class RealtimeSessionService:
                 await livekit_api.room.delete_room(DeleteRoomRequest(room=room_name))
             except Exception:
                 pass
+
+    async def create_server_session(
+        self,
+        payload: BrowserRtcSessionResolvedInput,
+        *,
+        room_name: str,
+    ) -> tuple[dict[str, object], str]:
+        """Create the room and production agent dispatch without a browser token."""
+        if not self._settings.livekit_configured:
+            raise RealtimeSessionError("LiveKit runtime is not configured")
+        pipeline_payload = payload.model_dump(mode="json", exclude_none=True)
+        pipeline_payload["room"]["room_name"] = room_name
+        pipeline_payload["room"]["participant_identity"] = None
+        pipeline_payload["dispatch_agent_name"] = (
+            payload.dispatch_agent_name or self._settings.livekit_agent_name
+        )
+        manifest = await self._build_pipeline_manifest(pipeline_payload)
+        if manifest["errors"]:
+            raise RealtimeSessionError("pipeline session validation failed")
+        dispatch = await self._create_room_dispatch(
+            room_name=room_name,
+            agent_name=str(manifest["dispatch_agent_name"]),
+            metadata=encrypt_runtime_metadata(str(manifest["dispatch_metadata"]), self._settings),
+        )
+        return manifest, str(dispatch.id)
+
+    async def dispatch_agent(self, *, room_name: str, agent_name: str, metadata: str) -> str:
+        if not self._settings.livekit_configured:
+            raise RealtimeSessionError("LiveKit runtime is not configured")
+        async with self._livekit_api() as livekit_api:
+            try:
+                dispatch = await livekit_api.agent_dispatch.create_dispatch(
+                    CreateAgentDispatchRequest(
+                        room=room_name,
+                        agent_name=agent_name,
+                        metadata=metadata,
+                    )
+                )
+            except Exception as exc:
+                raise RealtimeSessionError("agent dispatch creation failed") from exc
+        return str(dispatch.id)
 
     async def _build_pipeline_manifest(self, payload: dict[str, object]) -> dict[str, object]:
         endpoint = self._settings.pipeline_base_url.rstrip("/") + "/webrtc/session"
@@ -116,11 +157,7 @@ class RealtimeSessionService:
         agent_name: str,
         metadata: str,
     ):
-        async with LiveKitAPI(
-            url=self._settings.livekit_url,
-            api_key=self._settings.livekit_api_key,
-            api_secret=self._settings.livekit_api_secret,
-        ) as livekit_api:
+        async with self._livekit_api() as livekit_api:
             await livekit_api.room.create_room(
                 CreateRoomRequest(
                     name=room_name,
@@ -142,6 +179,24 @@ class RealtimeSessionService:
                 except Exception:
                     pass
                 raise RealtimeSessionError("live session dispatch creation failed") from exc
+
+    @asynccontextmanager
+    async def _livekit_api(self):
+        ssl_context = ssl.create_default_context(cafile=certifi.where())
+        session = aiohttp.ClientSession(
+            connector=aiohttp.TCPConnector(ssl=ssl_context),
+        )
+        try:
+            async with LiveKitAPI(
+                url=self._settings.livekit_url,
+                api_key=self._settings.livekit_api_key,
+                api_secret=self._settings.livekit_api_secret,
+                session=session,
+            ) as livekit_api:
+                yield livekit_api
+        finally:
+            if not session.closed:
+                await session.close()
 
     def _create_access_token(
         self,

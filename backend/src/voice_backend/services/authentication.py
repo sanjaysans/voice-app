@@ -33,7 +33,9 @@ class AuthenticationService:
     def get_session(self, user_id: UUID) -> SessionRecord | None:
         return self._build_session(user_id)
 
-    def _build_session(self, user_id: UUID, *, force_refresh: bool = False, user=None) -> SessionRecord | None:
+    def _build_session(
+        self, user_id: UUID, *, force_refresh: bool = False, user=None
+    ) -> SessionRecord | None:
         if not force_refresh:
             cached = _SESSION_CACHE.get(user_id)
             if cached is not None:

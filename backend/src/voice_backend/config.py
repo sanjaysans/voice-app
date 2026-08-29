@@ -73,6 +73,18 @@ class Settings(BaseSettings):
         default=60,
         validation_alias=AliasChoices("VOICE_LIVEKIT_TOKEN_TTL_MINUTES"),
     )
+    internal_api_key: str = Field(
+        default="voice-local-internal-key",
+        validation_alias=AliasChoices("VOICE_INTERNAL_API_KEY"),
+    )
+    backend_base_url: str = Field(
+        default="http://127.0.0.1:8100",
+        validation_alias=AliasChoices("VOICE_BACKEND_BASE_URL"),
+    )
+    recordings_dir: str = Field(
+        default="var/recordings",
+        validation_alias=AliasChoices("VOICE_RECORDINGS_DIR"),
+    )
     database_url: str | None = Field(
         default=None,
         validation_alias=AliasChoices("VOICE_DATABASE_URL"),
@@ -123,11 +135,11 @@ class Settings(BaseSettings):
         if resolved.environment != "prod" and resolved.password_hash_iterations == 150_000:
             object.__setattr__(resolved, "password_hash_iterations", 1_000)
 
-        livekit_url = resolved.livekit_url.strip() if isinstance(resolved.livekit_url, str) else None
+        livekit_url = (
+            resolved.livekit_url.strip() if isinstance(resolved.livekit_url, str) else None
+        )
         livekit_api_key = (
-            resolved.livekit_api_key.strip()
-            if isinstance(resolved.livekit_api_key, str)
-            else None
+            resolved.livekit_api_key.strip() if isinstance(resolved.livekit_api_key, str) else None
         )
         livekit_api_secret = (
             resolved.livekit_api_secret.strip()

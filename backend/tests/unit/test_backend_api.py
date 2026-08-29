@@ -91,6 +91,65 @@ async def test_workspace_agents_endpoint_returns_latest_version_data(
 
 
 @pytest.mark.asyncio
+async def test_evaluation_endpoints_create_run_and_expose_call_evidence(
+    session, seeded_domain, auth_context
+) -> None:
+    app = build_test_app(session, auth_context)
+    workspace_id = seeded_domain["workspace"].id
+    agent_id = seeded_domain["agent"].id
+    base_path = f"/api/v1/tenants/voice-demo/workspaces/{workspace_id}/evaluations"
+    payload = {
+        "suite_key": "api-confidence",
+        "name": "API confidence",
+        "description": "Endpoint coverage",
+        "agent_id": str(agent_id),
+        "status": "active",
+        "cases": [
+            {
+                "case_key": "greeting",
+                "name": "Greeting",
+                "scenario": {"turns": [{"user": "Hello", "assistant": "Hello, I can help."}]},
+                "expected_behavior": {"outcome": "supported"},
+                "assertions": [
+                    {
+                        "key": "response",
+                        "type": "contains",
+                        "expected": {"text": "help"},
+                        "critical": True,
+                    }
+                ],
+            }
+        ],
+    }
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        create_response = await client.post(base_path, json=payload)
+        suite_id = create_response.json()["suite_id"]
+        run_response = await client.post(
+            f"{base_path}/{suite_id}/runs", json={"execution_mode": "scripted_text"}
+        )
+        run_id = run_response.json()["run_id"]
+        history_response = await client.get(f"{base_path}/{suite_id}/runs")
+        get_run_response = await client.get(f"{base_path}/runs/{run_id}")
+        logs_response = await client.get(
+            f"/api/v1/tenants/voice-demo/workspaces/{workspace_id}/calls/logs",
+            params={"call_type": "test", "page": 1, "page_size": 10},
+        )
+
+    assert create_response.status_code == 201
+    assert run_response.status_code == 200
+    assert history_response.status_code == 200
+    assert history_response.json()[0]["run_id"] == run_id
+    assert get_run_response.status_code == 200
+    assert get_run_response.json()["run_id"] == run_id
+    assert get_run_response.json()["case_runs"][0]["call_id"] is not None
+    assert logs_response.status_code == 200
+    assert logs_response.json()["total_items"] == 1
+    assert logs_response.json()["items"][0]["is_test"] is True
+
+
+@pytest.mark.asyncio
 async def test_workspace_crud_endpoints_work(session, seeded_domain, auth_context) -> None:
     app = build_test_app(session, auth_context)
     async with AsyncClient(

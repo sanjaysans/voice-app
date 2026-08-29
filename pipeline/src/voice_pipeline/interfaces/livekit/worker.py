@@ -1,10 +1,12 @@
 import asyncio
+import inspect
+import json
 from collections.abc import Callable
 from functools import partial
 from importlib import import_module
 from typing import Any
 
-from livekit.agents import Agent, AgentSession
+from livekit.agents import Agent, AgentSession, function_tool
 
 from voice_pipeline.application.session_manifest import (
     build_runtime_plan_for_client_session,
@@ -12,9 +14,14 @@ from voice_pipeline.application.session_manifest import (
 )
 from voice_pipeline.config import Settings, get_settings
 from voice_pipeline.domain.session import ClientSessionRequest
+from voice_pipeline.domain.workflow import WorkflowGraph
 from voice_pipeline.infrastructure.livekit_providers import build_provider_bundle
 from voice_pipeline.infrastructure.livekit_runtime import LiveKitRuntimeValidator
 from voice_pipeline.logging import configure_logging, get_logger
+
+_TERMINATION_TASKS: set[asyncio.Task[None]] = set()
+SESSION_START_TIMEOUT_SECONDS = 45
+SPEECH_TIMEOUT_SECONDS = 45
 
 
 def load_livekit_sdk() -> dict[str, Any]:
@@ -94,6 +101,178 @@ def _build_agent_instructions(session_request: ClientSessionRequest) -> str:
     return "\n".join(lines)
 
 
+async def _speak(session: AgentSession, text: str, **kwargs: object) -> object:
+    """Support LiveKit SDKs that return either a handle or an awaitable handle."""
+    speech = session.say(text, **kwargs)
+    if inspect.isawaitable(speech):
+        return await asyncio.wait_for(speech, timeout=SPEECH_TIMEOUT_SECONDS)
+    return speech
+
+
+async def _maybe_await(value: object) -> object:
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
+
+async def _publish_runtime_event(room: object | None, event_type: str, payload: dict[str, object]) -> None:
+    if room is None:
+        return
+    local_participant = getattr(room, "local_participant", None)
+    publish_data = getattr(local_participant, "publish_data", None)
+    if publish_data is None:
+        return
+    try:
+        result = publish_data(
+            json.dumps({"event_type": event_type, **payload}).encode("utf-8"),
+            reliable=True,
+            topic="voice_runtime",
+        )
+        await _maybe_await(result)
+    except Exception:
+        return
+
+
+async def _schedule_shutdown_after_speech(
+    session: AgentSession,
+    workflow: WorkflowGraph,
+    speech: object,
+) -> None:
+    if hasattr(speech, "wait_for_playout"):
+        await speech.wait_for_playout()
+    workflow.mark_ended()
+    await _maybe_await(session.shutdown(drain=False))
+
+
+def _build_end_call_tool(session: AgentSession, workflow: WorkflowGraph, room: object | None = None):
+    @function_tool(
+        name="end_call",
+        description=(
+            "Use only when the workflow reaches its End call state. "
+            "Provide the concise closing note to play once before termination."
+        ),
+    )
+    async def end_call(note: str) -> str:
+        if workflow.has_nodes and not workflow.is_terminal:
+            return "End call is not permitted until the workflow reaches its End call state."
+        if not workflow.begin_termination():
+            return "The call has already ended."
+        closing_note = note.strip() or "Thank you for your time. Goodbye."
+        await _publish_runtime_event(room, "workflow.ended", {"state_id": workflow.current.node_id})
+        speech = await _speak(session, closing_note, allow_interruptions=False)
+        termination_task = asyncio.create_task(
+            _schedule_shutdown_after_speech(session, workflow, speech)
+        )
+        _TERMINATION_TASKS.add(termination_task)
+        termination_task.add_done_callback(_TERMINATION_TASKS.discard)
+        return "The closing note was played and the call was terminated."
+
+    return end_call
+
+
+def _build_transition_tool(
+    session: AgentSession,
+    workflow: WorkflowGraph,
+    agent_holder: dict[str, Agent | None],
+    base_instructions: str,
+    logger: Any,
+    room: object | None = None,
+):
+    @function_tool(
+        name="transition_to_state",
+        description=(
+            "Move the conversation to a configured next workflow state only after the caller's "
+            "latest response satisfies that transition condition."
+        ),
+    )
+    async def transition_to_state(next_state_id: str, reason: str = "") -> str:
+        if not reason.strip():
+            return (
+                "Transition rejected: provide the evidence that satisfies the transition condition."
+            )
+        previous_state = workflow.current.node_id if workflow.current else None
+        try:
+            node = workflow.transition(next_state_id)
+        except ValueError as exc:
+            if str(exc) == "workflow transition limit reached":
+                node = workflow.force_terminal()
+                logger.warning(
+                    "pipeline.workflow.transition_limit_reached",
+                    from_state=previous_state,
+                    to_state=node.node_id,
+                )
+                await _start_terminal_response(
+                    session,
+                    workflow,
+                    "The conversation reached its safety limit. Generate a brief polite closing note and end the call now.",
+                )
+                return "Workflow safety limit reached. The call is being closed."
+            return f"Transition rejected: {exc}"
+        agent = agent_holder.get("agent")
+        if agent is not None:
+            await _maybe_await(
+                agent.update_instructions(
+                    f"{base_instructions}\n\n{workflow.current_instructions()}"
+                )
+            )
+            await _maybe_await(session.update_agent(agent))
+        logger.info(
+            "pipeline.workflow.transitioned",
+            from_state=previous_state,
+            to_state=node.node_id,
+            reason=reason,
+            terminal=node.is_terminal,
+        )
+        await _publish_runtime_event(
+            room,
+            "workflow.transitioned",
+            {
+                "from_state": previous_state,
+                "to_state": node.node_id,
+                "reason": reason,
+                "terminal": node.is_terminal,
+            },
+        )
+        if node.is_terminal:
+            await _start_terminal_response(
+                session,
+                workflow,
+                "The workflow is complete. Generate a concise, polite closing note with the agreed next step, play it once, and end the call without waiting for another reply.",
+            )
+            return (
+                "End call state reached. The closing note is being played and the call is ending."
+            )
+        return f"Active state is now {node.label}. Continue using its state prompt."
+
+    return transition_to_state
+
+
+async def _start_terminal_response(
+    session: AgentSession,
+    workflow: WorkflowGraph,
+    instructions: str,
+) -> None:
+    if not workflow.begin_termination():
+        return
+    try:
+        speech = session.generate_reply(
+            instructions=instructions,
+            allow_interruptions=False,
+        )
+        speech = await _maybe_await(speech)
+    except (AttributeError, RuntimeError):
+        speech = await _speak(
+            session,
+            "Thank you for your time. We have captured the next step. Goodbye.",
+            allow_interruptions=False,
+        )
+    termination_task = asyncio.create_task(
+        _schedule_shutdown_after_speech(session, workflow, speech)
+    )
+    _TERMINATION_TASKS.add(termination_task)
+    termination_task.add_done_callback(_TERMINATION_TASKS.discard)
+
+
 def _log_context(ctx: object) -> object:
     value = getattr(ctx, "log_context_fields", {})
     return value() if callable(value) else value
@@ -128,7 +307,9 @@ def _session_close_future(session: object, room: object) -> asyncio.Future[dict[
     return close_future
 
 
-def _merge_turn_handling(bundle_turn_handling: dict[str, object], plan: object) -> dict[str, object]:
+def _merge_turn_handling(
+    bundle_turn_handling: dict[str, object], plan: object
+) -> dict[str, object]:
     turn_policy = getattr(plan.blueprint, "turn_policy", None)
     if turn_policy is None:
         return dict(bundle_turn_handling)
@@ -139,9 +320,7 @@ def _merge_turn_handling(bundle_turn_handling: dict[str, object], plan: object) 
 
     interruption = dict(bundle_turn_handling.get("interruption", {}))
     interruption["enabled"] = bool(turn_policy.allow_interruptions)
-    interruption["resume_false_interruption"] = bool(
-        turn_policy.false_interruption_recovery
-    )
+    interruption["resume_false_interruption"] = bool(turn_policy.false_interruption_recovery)
 
     return {
         **bundle_turn_handling,
@@ -199,18 +378,51 @@ async def _run_worker_entrypoint(
         vad=bundle.vad,
         turn_handling=turn_handling,
     )
+
+    def on_remote_track_subscribed(
+        track: object, publication: object, participant: object
+    ) -> None:
+        logger.info(
+            "pipeline.worker.track.subscribed",
+            participant=getattr(participant, "identity", None),
+            source=getattr(publication, "source", None),
+            track_kind=getattr(track, "kind", None),
+        )
+
+    def on_user_input_transcribed(event: object) -> None:
+        transcript = str(getattr(event, "transcript", "") or "").strip()
+        if transcript and bool(getattr(event, "is_final", False)):
+            logger.info("pipeline.worker.stt.final", transcript=transcript)
+
+    ctx.room.on("track_subscribed", on_remote_track_subscribed)
+    session.on("user_input_transcribed", on_user_input_transcribed)
     close_future = _session_close_future(session, ctx.room)
+    workflow = WorkflowGraph(resolved_request.workflow)
+    base_instructions = _build_agent_instructions(resolved_request)
+    agent_holder: dict[str, Agent | None] = {"agent": None}
     agent = Agent(
-        instructions=_build_agent_instructions(resolved_request),
+        instructions=f"{base_instructions}\n\n{workflow.current_instructions()}"
+        if workflow.has_nodes
+        else base_instructions,
         allow_interruptions=plan.blueprint.turn_policy.allow_interruptions,
+        tools=[
+            _build_end_call_tool(session, workflow, ctx.room),
+            _build_transition_tool(
+                session, workflow, agent_holder, base_instructions, logger, ctx.room
+            ),
+        ],
     )
-    await session.start(
-        agent=agent,
-        room=ctx.room,
-        room_options=bundle.room_options,
+    agent_holder["agent"] = agent
+    await asyncio.wait_for(
+        session.start(
+            agent=agent,
+            room=ctx.room,
+            room_options=bundle.room_options,
+        ),
+        timeout=SESSION_START_TIMEOUT_SECONDS,
     )
     if resolved_request.prompt.opening_message:
-        await session.say(resolved_request.prompt.opening_message)
+        await _speak(session, resolved_request.prompt.opening_message)
     logger.info(
         "pipeline.worker.session.started",
         room=getattr(getattr(ctx, "room", None), "name", None),

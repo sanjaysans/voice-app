@@ -159,7 +159,9 @@ def _health_check_payload(account) -> tuple[str, dict[str, object]]:
         }
 
     unresolved_secret_refs = [
-        key for key in rule["required_keys"] if not _get_config_secret(config, key) and config.get(f"{key}_ref")
+        key
+        for key in rule["required_keys"]
+        if not _get_config_secret(config, key) and config.get(f"{key}_ref")
     ]
     if unresolved_secret_refs:
         return "error", {
@@ -300,7 +302,9 @@ class ProviderAccountAdminService:
             vendor_name=payload.vendor_name,
             label=payload.label,
             status=payload.status,
-            config=encrypt_provider_config(payload.config or {}) if payload.config is not None else None,
+            config=encrypt_provider_config(payload.config or {})
+            if payload.config is not None
+            else None,
         )
         clear_read_cache()
         logger.info(
@@ -310,7 +314,9 @@ class ProviderAccountAdminService:
         )
         return _to_record(updated)
 
-    def run_health_check(self, tenant_slug: str, provider_account_id) -> ProviderAccountRecord | None:
+    def run_health_check(
+        self, tenant_slug: str, provider_account_id
+    ) -> ProviderAccountRecord | None:
         tenant = self.tenants.get_by_slug(tenant_slug)
         if tenant is None:
             return None

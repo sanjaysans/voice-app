@@ -104,6 +104,8 @@ class ClientSessionRequest(BaseModel):
     llm: OpenAiLlmConfig
     tts: CartesiaTtsConfig
     vad: SileroVadConfig = Field(default_factory=SileroVadConfig)
+    variables: dict[str, object] = Field(default_factory=dict)
+    workflow: dict[str, object] = Field(default_factory=dict)
     metadata: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -150,4 +152,8 @@ class ClientSessionRequest(BaseModel):
             },
             "vad": self.vad.model_dump(mode="json"),
             "opening_message_configured": bool(self.prompt.opening_message),
+            "variable_keys": sorted(self.variables),
+            "workflow_node_count": len(self.workflow.get("nodes", []))
+            if isinstance(self.workflow.get("nodes"), list)
+            else 0,
         }

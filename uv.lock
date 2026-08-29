@@ -1819,6 +1819,8 @@ name = "voice-backend"
 version = "0.1.0"
 source = { editable = "backend" }
 dependencies = [
+    { name = "aiohttp" },
+    { name = "certifi" },
     { name = "cryptography" },
     { name = "fastapi" },
     { name = "httpx" },
@@ -1833,6 +1835,8 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp", specifier = ">=3.10.5" },
+    { name = "certifi", specifier = ">=2024.8.30" },
     { name = "cryptography", specifier = ">=43.0.1" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "httpx", specifier = ">=0.27.2" },

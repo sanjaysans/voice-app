@@ -44,6 +44,18 @@ class Settings(BaseSettings):
         default="voice-router-agent",
         validation_alias=AliasChoices("VOICE_LIVEKIT_AGENT_NAME"),
     )
+    backend_base_url: str = Field(
+        default="http://127.0.0.1:8100",
+        validation_alias=AliasChoices("VOICE_BACKEND_BASE_URL"),
+    )
+    recordings_dir: str = Field(
+        default="var/recordings",
+        validation_alias=AliasChoices("VOICE_RECORDINGS_DIR"),
+    )
+    internal_api_key: str = Field(
+        default="voice-local-internal-key",
+        validation_alias=AliasChoices("VOICE_INTERNAL_API_KEY"),
+    )
     livekit_room_name: str = Field(
         default="voice-local-room",
         validation_alias=AliasChoices("VOICE_LIVEKIT_ROOM_NAME"),

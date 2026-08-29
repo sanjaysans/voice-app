@@ -13,9 +13,20 @@ from voice_backend.schemas import (
     AgentVersionCreateInput,
     AgentVersionRecord,
 )
+from voice_backend.services.agent_config import normalize_flow_edges, normalize_flow_nodes
 from voice_backend.services.read_cache import clear_read_cache, get_read_cache, set_read_cache
 
 logger = get_logger(__name__)
+
+
+def _normalized_routing_config(config: dict[str, object] | None) -> dict[str, object]:
+    routing_config = dict(config or {})
+    flow_nodes = normalize_flow_nodes(routing_config.get("flow_nodes", []))
+    routing_config["flow_nodes"] = flow_nodes
+    routing_config["flow_edges"] = normalize_flow_edges(
+        routing_config.get("flow_edges", []), flow_nodes
+    )
+    return routing_config
 
 
 def _title_case_status(status: str) -> str:
@@ -40,32 +51,6 @@ def _relative_label(timestamp) -> str:
         return f"{hours} hours ago"
     days = hours // 24
     return f"{days} days ago"
-
-
-def _normalize_flow_edges(raw_edges) -> list[dict[str, str]]:
-    normalized: list[dict[str, str]] = []
-    for index, edge in enumerate(raw_edges or []):
-        if isinstance(edge, dict):
-            normalized.append(
-                {
-                    "id": str(edge.get("id", f"edge_{index}")),
-                    "source_id": str(edge.get("source_id", "")),
-                    "target_id": str(edge.get("target_id", "")),
-                    "label": str(edge.get("label", "")),
-                    "condition": str(edge.get("condition", "")),
-                }
-            )
-        elif isinstance(edge, (list, tuple)) and len(edge) >= 2:
-            normalized.append(
-                {
-                    "id": f"edge_{index}",
-                    "source_id": str(edge[0]),
-                    "target_id": str(edge[1]),
-                    "label": "",
-                    "condition": "",
-                }
-            )
-    return normalized
 
 
 def _to_version_record(version) -> AgentVersionRecord:
@@ -100,6 +85,7 @@ def _to_studio_record(agent) -> AgentStudioRecord:
     latest_version = agent.versions[-1] if agent.versions else None
     routing_config = latest_version.routing_config if latest_version is not None else {}
     vendor_config = latest_version.vendor_config if latest_version is not None else {}
+    flow_nodes = normalize_flow_nodes(routing_config.get("flow_nodes", []))
     return AgentStudioRecord(
         agent_id=agent.id,
         workspace_id=agent.workspace_id,
@@ -117,8 +103,9 @@ def _to_studio_record(agent) -> AgentStudioRecord:
             {"stt": "Deepgram", "llm": "GPT-4.1", "tts": "ElevenLabs"},
         ),
         runtime_profile=vendor_config.get("runtime_profile", {}),
-        flow_nodes=routing_config.get("flow_nodes", []),
-        flow_edges=_normalize_flow_edges(routing_config.get("flow_edges", [])),
+        variables=routing_config.get("variables", []),
+        flow_nodes=flow_nodes,
+        flow_edges=normalize_flow_edges(routing_config.get("flow_edges", []), flow_nodes),
         tools_catalog=routing_config.get("tools_catalog", []),
         knowledge_sources=routing_config.get("knowledge_sources", []),
         latest_version_number=latest_version.version_number if latest_version is not None else None,
@@ -156,7 +143,7 @@ class AgentDefinitionAdminService:
                 agent.id,
                 1,
                 payload.initial_version.pipeline_mode,
-                routing_config=payload.initial_version.routing_config,
+                routing_config=_normalized_routing_config(payload.initial_version.routing_config),
                 vendor_config=payload.initial_version.vendor_config,
             )
         clear_read_cache()
@@ -226,7 +213,7 @@ class AgentDefinitionAdminService:
             agent.id,
             self.agents.next_version_number_for(agent.id),
             payload.pipeline_mode,
-            routing_config=payload.routing_config,
+            routing_config=_normalized_routing_config(payload.routing_config),
             vendor_config=payload.vendor_config,
         )
         refreshed = self.agents.get_definition_for_workspace(tenant.id, workspace.id, agent.id)
@@ -259,7 +246,7 @@ class AgentDefinitionAdminService:
                 routing_config={},
                 vendor_config={},
             )
-        routing_config = dict(latest_version.routing_config or {})
+        routing_config = _normalized_routing_config(latest_version.routing_config)
         vendor_config = dict(latest_version.vendor_config or {})
         if payload.description is not None:
             routing_config["description"] = payload.description
@@ -269,10 +256,21 @@ class AgentDefinitionAdminService:
             routing_config["segment"] = payload.segment
         if payload.goal is not None:
             routing_config["goal"] = payload.goal
+        if payload.variables is not None:
+            routing_config["variables"] = [item.model_dump() for item in payload.variables]
         if payload.flow_nodes is not None:
-            routing_config["flow_nodes"] = [item.model_dump() for item in payload.flow_nodes]
-        if payload.flow_edges is not None:
-            routing_config["flow_edges"] = [item.model_dump() for item in payload.flow_edges]
+            flow_nodes = normalize_flow_nodes([item.model_dump() for item in payload.flow_nodes])
+            routing_config["flow_nodes"] = flow_nodes
+            if payload.flow_edges is not None:
+                routing_config["flow_edges"] = normalize_flow_edges(
+                    [item.model_dump() for item in payload.flow_edges], flow_nodes
+                )
+        elif payload.flow_edges is not None:
+            flow_nodes = normalize_flow_nodes(routing_config.get("flow_nodes", []))
+            routing_config["flow_nodes"] = flow_nodes
+            routing_config["flow_edges"] = normalize_flow_edges(
+                [item.model_dump() for item in payload.flow_edges], flow_nodes
+            )
         if payload.tools_catalog is not None:
             routing_config["tools_catalog"] = [item.model_dump() for item in payload.tools_catalog]
         if payload.knowledge_sources is not None:
@@ -301,7 +299,9 @@ class AgentDefinitionAdminService:
         )
         refreshed = self.agents.get_definition_for_workspace(tenant.id, workspace.id, agent.id)
         clear_read_cache()
-        logger.info("agent_definition.studio_updated", tenant_id=str(tenant.id), agent_id=str(agent.id))
+        logger.info(
+            "agent_definition.studio_updated", tenant_id=str(tenant.id), agent_id=str(agent.id)
+        )
         return _to_studio_record(refreshed)
 
     def delete_agent(self, tenant_slug: str, workspace_id, agent_id) -> bool:

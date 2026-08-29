@@ -20,6 +20,7 @@ from voice_pipeline.domain.session import (
     SileroVadConfig,
     WebRtcRoomConfig,
 )
+from voice_pipeline.domain.workflow import WorkflowGraph, WorkflowNode, WorkflowTransition
 
 __all__ = [
     "AgentBlueprint",
@@ -40,4 +41,7 @@ __all__ = [
     "SileroVadConfig",
     "TurnPolicy",
     "WebRtcRoomConfig",
+    "WorkflowGraph",
+    "WorkflowNode",
+    "WorkflowTransition",
 ]

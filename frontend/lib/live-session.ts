@@ -10,6 +10,7 @@ export type BrowserRtcSessionPayload = {
   };
   participant_name?: string;
   metadata?: Record<string, string>;
+  variables?: Record<string, string | number | boolean>;
 };
 
 export type BrowserRtcSessionResponse = {

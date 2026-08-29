@@ -21,6 +21,9 @@ EXPECTED_INDEXES = {
     "provider_accounts": {"ix_provider_accounts_tenant_kind"},
     "calls": {"ix_calls_tenant_created"},
     "call_events": {"ix_call_events_call_occurred"},
+    "eval_suites": {"ix_eval_suites_tenant_workspace_updated"},
+    "eval_runs": {"ix_eval_runs_tenant_workspace_created"},
+    "eval_case_runs": {"ix_eval_case_runs_run_status"},
 }
 
 

@@ -22,3 +22,4 @@ packages = ["src/voice_pipeline"]
 [project.scripts]
 voice-pipeline-dev = "voice_pipeline.dev:main"
 voice-pipeline-worker = "voice_pipeline.interfaces.livekit.worker:main"
+voice-pipeline-eval-caller = "voice_pipeline.interfaces.livekit.eval_caller:main"

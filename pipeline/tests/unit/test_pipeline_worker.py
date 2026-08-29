@@ -5,11 +5,74 @@ import pytest
 
 from voice_pipeline.config import Settings
 from voice_pipeline.domain.session import ClientSessionRequest
+from voice_pipeline.domain.workflow import WorkflowGraph
+from voice_pipeline.interfaces.livekit.eval_caller import (
+    MAX_AGENT_TURNS,
+    _item_role,
+)
 from voice_pipeline.interfaces.livekit.worker import (
+    _build_transition_tool,
     _run_worker_entrypoint,
+    _speak,
     build_worker_bootstrap,
     build_worker_options_kwargs,
 )
+
+
+@pytest.mark.asyncio
+async def test_speak_supports_livekit_sync_speech_handle() -> None:
+    class StubSession:
+        def say(self, message: str, **kwargs):
+            return {"message": message, "kwargs": kwargs}
+
+    speech = await _speak(StubSession(), "Hello", allow_interruptions=False)
+
+    assert speech == {"message": "Hello", "kwargs": {"allow_interruptions": False}}
+
+
+@pytest.mark.asyncio
+async def test_terminal_transition_generates_closing_response_and_shuts_down() -> None:
+    class StubSession:
+        def __init__(self) -> None:
+            self.shutdown_called = False
+
+        def generate_reply(self, **kwargs):
+            return None
+
+        def shutdown(self, **kwargs):
+            self.shutdown_called = True
+
+        async def update_agent(self, _agent) -> None:
+            return None
+
+    class StubAgent:
+        async def update_instructions(self, _instructions: str) -> None:
+            return None
+
+    session = StubSession()
+    workflow = WorkflowGraph(
+        {
+            "nodes": [
+                {"id": "entry", "label": "Entry"},
+                {"id": "end_call", "label": "End call", "node_type": "end_call"},
+            ],
+            "edges": [{"source_id": "entry", "target_id": "end_call", "condition": "Complete"}],
+        }
+    )
+    transition = _build_transition_tool(
+        session,
+        workflow,
+        {"agent": StubAgent()},
+        "base",
+        SimpleNamespace(info=lambda *args, **kwargs: None, warning=lambda *args, **kwargs: None),
+    )
+
+    result = await transition(next_state_id="end_call", reason="The caller confirmed completion")
+    await asyncio.sleep(0)
+
+    assert "call is ending" in result
+    assert workflow.ended is True
+    assert session.shutdown_called is True
 
 
 def test_worker_bootstrap_surfaces_default_browser_providers() -> None:
@@ -41,6 +104,13 @@ def test_worker_options_include_livekit_connection_settings() -> None:
         "log_level": "DEBUG",
         "load_threshold": float("inf"),
     }
+
+
+def test_eval_caller_uses_conversation_item_role_for_local_speech() -> None:
+    event = SimpleNamespace(item=SimpleNamespace(role="assistant"))
+
+    assert _item_role(event) == "assistant"
+    assert MAX_AGENT_TURNS == 8
 
 
 @pytest.mark.asyncio

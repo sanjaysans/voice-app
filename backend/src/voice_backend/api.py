@@ -1,8 +1,11 @@
+import asyncio
 from collections.abc import Callable
+from pathlib import Path
 from typing import Annotated, Literal, TypeVar
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi.responses import FileResponse
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -16,7 +19,9 @@ from voice_backend.auth import (
     require_workspace_admin_access,
     require_workspace_write_access,
 )
-from voice_backend.database import get_request_session
+from voice_backend.database import create_session_factory, get_request_session
+from voice_backend.logging import get_logger
+from voice_backend.repositories import CallRepository
 from voice_backend.schemas import (
     AgentDefinitionCreateInput,
     AgentDefinitionUpdateInput,
@@ -25,6 +30,12 @@ from voice_backend.schemas import (
     BrowserRtcSessionCreateInput,
     CallReviewCreateInput,
     CallReviewUpdateInput,
+    EvalCaseCreateInput,
+    EvalCaseResultInput,
+    EvalCaseUpdateInput,
+    EvalRunCreateInput,
+    EvalSuiteCreateInput,
+    EvalSuiteUpdateInput,
     LiveTestSessionUpdateInput,
     LoginInput,
     ProviderAccountCreateInput,
@@ -43,6 +54,7 @@ from voice_backend.services import (
     AuthenticationService,
     CallHistoryService,
     CallReviewService,
+    EvaluationService,
     LiveTestSessionService,
     ProviderAccountAdminService,
     RealtimeSessionError,
@@ -54,12 +66,25 @@ from voice_backend.services import (
     WorkspaceStateService,
 )
 from voice_backend.services.authentication import clear_session_cache
+from voice_backend.services.evaluation import resolve_live_case
 from voice_backend.services.read_cache import clear_read_cache
 
 router = APIRouter(prefix="/api/v1")
 SessionDependency = Annotated[Session, Depends(get_request_session)]
 AuthDependency = Annotated[AuthContext, Depends(get_current_auth)]
 MutationResult = TypeVar("MutationResult")
+_LIVE_EVALUATION_TASKS: set[asyncio.Task[None]] = set()
+logger = get_logger(__name__)
+
+
+def _finish_live_evaluation_task(task: asyncio.Task[None]) -> None:
+    _LIVE_EVALUATION_TASKS.discard(task)
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        logger.info("evaluation.live.task.cancelled")
+    except Exception as exc:
+        logger.error("evaluation.live.task.failed", error=str(exc))
 
 
 def _execute_write(session: Session, operation: Callable[[], MutationResult]) -> MutationResult:
@@ -575,6 +600,268 @@ def list_call_logs(
     return response.model_dump()
 
 
+@router.get("/tenants/{tenant_slug}/workspaces/{workspace_id}/evaluations")
+def list_evaluation_suites(
+    tenant_slug: str,
+    workspace_id: UUID,
+    session: SessionDependency,
+    auth: AuthDependency,
+):
+    require_workspace_access(auth, tenant_slug, workspace_id)
+    suites = EvaluationService(session).list_suites(
+        tenant_slug,
+        workspace_id,
+        tenant_id=_tenant_id_from_auth(auth, tenant_slug),
+    )
+    if suites is None:
+        raise HTTPException(status_code=404, detail="workspace not found")
+    return [item.model_dump() for item in suites]
+
+
+@router.get("/tenants/{tenant_slug}/workspaces/{workspace_id}/evaluations/runs/{run_id}")
+def get_evaluation_run(
+    tenant_slug: str,
+    workspace_id: UUID,
+    run_id: UUID,
+    session: SessionDependency,
+    auth: AuthDependency,
+):
+    require_workspace_access(auth, tenant_slug, workspace_id)
+    run = EvaluationService(session).get_run(tenant_slug, workspace_id, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="evaluation run not found")
+    return run.model_dump()
+
+
+@router.get(
+    "/tenants/{tenant_slug}/workspaces/{workspace_id}/calls/{call_id}/recording",
+    response_class=FileResponse,
+)
+def get_call_recording(
+    tenant_slug: str,
+    workspace_id: UUID,
+    call_id: UUID,
+    request: Request,
+    session: SessionDependency,
+    auth: AuthDependency,
+):
+    require_workspace_access(auth, tenant_slug, workspace_id)
+    tenant_id = _tenant_id_from_auth(auth, tenant_slug)
+    call = CallRepository(session).get_for_workspace(tenant_id, workspace_id, call_id)
+    if call is None:
+        raise HTTPException(status_code=404, detail="call not found")
+    recording = call.resolved_config.get("recording", {}) if call.resolved_config else {}
+    filename = recording.get("filename") if isinstance(recording, dict) else None
+    if not isinstance(filename, str) or not filename or Path(filename).name != filename:
+        raise HTTPException(status_code=404, detail="call recording not available")
+    recording_path = Path(request.app.state.settings.recordings_dir) / filename
+    if not recording_path.is_file():
+        raise HTTPException(status_code=404, detail="call recording not available")
+    return FileResponse(recording_path, media_type="audio/wav", filename=filename)
+
+
+@router.get("/tenants/{tenant_slug}/workspaces/{workspace_id}/evaluations/{suite_id}/runs")
+def list_evaluation_runs(
+    tenant_slug: str,
+    workspace_id: UUID,
+    suite_id: UUID,
+    session: SessionDependency,
+    auth: AuthDependency,
+    limit: int = Query(default=50, ge=1, le=100),
+):
+    require_workspace_access(auth, tenant_slug, workspace_id)
+    runs = EvaluationService(session).list_runs(tenant_slug, workspace_id, suite_id, limit=limit)
+    if runs is None:
+        raise HTTPException(status_code=404, detail="evaluation suite not found")
+    return [item.model_dump() for item in runs]
+
+
+@router.post(
+    "/tenants/{tenant_slug}/workspaces/{workspace_id}/evaluations",
+    status_code=status.HTTP_201_CREATED,
+)
+def create_evaluation_suite(
+    tenant_slug: str,
+    workspace_id: UUID,
+    payload: EvalSuiteCreateInput,
+    session: SessionDependency,
+    auth: AuthDependency,
+):
+    require_workspace_write_access(auth, tenant_slug, workspace_id)
+    created = _execute_write(
+        session,
+        lambda: EvaluationService(session).create_suite(tenant_slug, workspace_id, payload),
+    )
+    if created is None:
+        raise HTTPException(status_code=404, detail="evaluation dependencies not found")
+    return created.model_dump()
+
+
+@router.get("/tenants/{tenant_slug}/workspaces/{workspace_id}/evaluations/{suite_id}")
+def get_evaluation_suite(
+    tenant_slug: str,
+    workspace_id: UUID,
+    suite_id: UUID,
+    session: SessionDependency,
+    auth: AuthDependency,
+):
+    require_workspace_access(auth, tenant_slug, workspace_id)
+    suite = EvaluationService(session).get_suite(tenant_slug, workspace_id, suite_id)
+    if suite is None:
+        raise HTTPException(status_code=404, detail="evaluation suite not found")
+    return suite.model_dump()
+
+
+@router.patch("/tenants/{tenant_slug}/workspaces/{workspace_id}/evaluations/{suite_id}")
+def update_evaluation_suite(
+    tenant_slug: str,
+    workspace_id: UUID,
+    suite_id: UUID,
+    payload: EvalSuiteUpdateInput,
+    session: SessionDependency,
+    auth: AuthDependency,
+):
+    require_workspace_write_access(auth, tenant_slug, workspace_id)
+    updated = _execute_write(
+        session,
+        lambda: EvaluationService(session).update_suite(
+            tenant_slug, workspace_id, suite_id, payload
+        ),
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail="evaluation suite not found")
+    return updated.model_dump()
+
+
+@router.post(
+    "/tenants/{tenant_slug}/workspaces/{workspace_id}/evaluations/{suite_id}/cases",
+    status_code=status.HTTP_201_CREATED,
+)
+def create_evaluation_case(
+    tenant_slug: str,
+    workspace_id: UUID,
+    suite_id: UUID,
+    payload: EvalCaseCreateInput,
+    session: SessionDependency,
+    auth: AuthDependency,
+):
+    require_workspace_write_access(auth, tenant_slug, workspace_id)
+    created = _execute_write(
+        session,
+        lambda: EvaluationService(session).create_case(
+            tenant_slug, workspace_id, suite_id, payload
+        ),
+    )
+    if created is None:
+        raise HTTPException(status_code=404, detail="evaluation suite not found")
+    return created.model_dump()
+
+
+@router.patch(
+    "/tenants/{tenant_slug}/workspaces/{workspace_id}/evaluations/{suite_id}/cases/{case_id}"
+)
+def update_evaluation_case(
+    tenant_slug: str,
+    workspace_id: UUID,
+    suite_id: UUID,
+    case_id: UUID,
+    payload: EvalCaseUpdateInput,
+    session: SessionDependency,
+    auth: AuthDependency,
+):
+    require_workspace_write_access(auth, tenant_slug, workspace_id)
+    updated = _execute_write(
+        session,
+        lambda: EvaluationService(session).update_case(
+            tenant_slug, workspace_id, suite_id, case_id, payload
+        ),
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail="evaluation case not found")
+    return updated.model_dump()
+
+
+@router.delete(
+    "/tenants/{tenant_slug}/workspaces/{workspace_id}/evaluations/{suite_id}/cases/{case_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_evaluation_case(
+    tenant_slug: str,
+    workspace_id: UUID,
+    suite_id: UUID,
+    case_id: UUID,
+    session: SessionDependency,
+    auth: AuthDependency,
+) -> Response:
+    require_workspace_write_access(auth, tenant_slug, workspace_id)
+    deleted = _execute_write(
+        session,
+        lambda: EvaluationService(session).delete_case(
+            tenant_slug, workspace_id, suite_id, case_id
+        ),
+    )
+    if deleted is not True:
+        raise HTTPException(status_code=404, detail="evaluation case not found")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+async def _execute_live_evaluation_run(settings, tenant_slug: str, workspace_id, run_id):
+    factory = create_session_factory(settings)
+    with factory() as background_session:
+        await EvaluationService(background_session).execute_live_run(
+            settings,
+            tenant_slug,
+            workspace_id,
+            run_id,
+        )
+
+
+@router.post("/tenants/{tenant_slug}/workspaces/{workspace_id}/evaluations/{suite_id}/runs")
+async def run_evaluation_suite(
+    tenant_slug: str,
+    workspace_id: UUID,
+    suite_id: UUID,
+    payload: EvalRunCreateInput,
+    request: Request,
+    session: SessionDependency,
+    auth: AuthDependency,
+):
+    require_workspace_write_access(auth, tenant_slug, workspace_id)
+    service = EvaluationService(session)
+    try:
+        run = _execute_write(
+            session,
+            lambda: service.create_live_run(tenant_slug, workspace_id, suite_id, payload)
+            if payload.execution_mode == "live_audio"
+            else service.run_suite(tenant_slug, workspace_id, suite_id, payload),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if run is None:
+        raise HTTPException(status_code=404, detail="evaluation suite not found")
+    if payload.execution_mode == "live_audio":
+        task = asyncio.create_task(
+            _execute_live_evaluation_run(
+                request.app.state.settings,
+                tenant_slug,
+                workspace_id,
+                run.run_id,
+            )
+        )
+        _LIVE_EVALUATION_TASKS.add(task)
+        task.add_done_callback(_finish_live_evaluation_task)
+    return run.model_dump()
+
+
+@router.post("/internal/evaluations/case-results", status_code=status.HTTP_202_ACCEPTED)
+def receive_live_evaluation_result(payload: EvalCaseResultInput, request: Request):
+    if request.headers.get("X-Voice-Internal-Key") != request.app.state.settings.internal_api_key:
+        raise HTTPException(status_code=401, detail="invalid internal API key")
+    if not resolve_live_case(payload.execution_id, payload.evidence):
+        raise HTTPException(status_code=404, detail="evaluation execution not waiting")
+    return {"accepted": True, "execution_id": payload.execution_id}
+
+
 @router.post(
     "/tenants/{tenant_slug}/workspaces/{workspace_id}/live/sessions",
     status_code=status.HTTP_201_CREATED,
@@ -588,9 +875,12 @@ async def create_browser_rtc_session(
     auth: AuthDependency,
 ):
     require_workspace_write_access(auth, tenant_slug, workspace_id)
-    prepared = LiveTestSessionService(session).prepare_browser_session(
-        tenant_slug, workspace_id, payload
-    )
+    try:
+        prepared = LiveTestSessionService(session).prepare_browser_session(
+            tenant_slug, workspace_id, payload
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     if prepared is None:
         raise HTTPException(status_code=404, detail="live test session dependencies not found")
     realtime = RealtimeSessionService(request.app.state.settings)
@@ -614,10 +904,14 @@ async def create_browser_rtc_session(
             ),
         )
     except HTTPException:
-        await realtime.cleanup_browser_session(room_name=created.room_name, dispatch_id=created.dispatch_id)
+        await realtime.cleanup_browser_session(
+            room_name=created.room_name, dispatch_id=created.dispatch_id
+        )
         raise
     if live_record is None:
-        await realtime.cleanup_browser_session(room_name=created.room_name, dispatch_id=created.dispatch_id)
+        await realtime.cleanup_browser_session(
+            room_name=created.room_name, dispatch_id=created.dispatch_id
+        )
         raise HTTPException(status_code=404, detail="live test agent not found")
     created.call_id = live_record.call_id
     return created.model_dump()

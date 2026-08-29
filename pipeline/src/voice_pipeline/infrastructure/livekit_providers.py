@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+from livekit import rtc
 from livekit.agents import TurnHandlingOptions, room_io
 from livekit.plugins import cartesia, deepgram, openai, silero
 
@@ -113,6 +114,12 @@ def build_provider_bundle(session_request: ClientSessionRequest) -> LiveKitProvi
     )
     room_options = room_io.RoomOptions(
         participant_identity=session_request.room.participant_identity,
+        participant_kinds=[
+            rtc.ParticipantKind.PARTICIPANT_KIND_STANDARD,
+            rtc.ParticipantKind.PARTICIPANT_KIND_SIP,
+            rtc.ParticipantKind.PARTICIPANT_KIND_CONNECTOR,
+            rtc.ParticipantKind.PARTICIPANT_KIND_AGENT,
+        ],
         close_on_disconnect=session_request.room.close_on_disconnect,
         delete_room_on_close=session_request.room.delete_room_on_close,
         text_input=session_request.room.text_input_enabled,

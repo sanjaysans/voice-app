@@ -18,6 +18,7 @@ The goal is not to overbuild. The goal is to make the first real system:
 - `call-pipeline-principles.md` — media/runtime architecture and extensibility model
 - `livekit-pipeline-foundation.md` — current generic pipeline contract and LiveKit runtime scaffold
 - `jobs-and-operations.md` — async work, logging, and local operations model
+- `evaluation-system.md` — versioned suites, simulated callers, assertions, scoring, and release gates
 - `coding-standards.md` — coding style, layering, linting, comments, logging, and review rules
 
 ## Rules

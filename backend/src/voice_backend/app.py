@@ -61,7 +61,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         duration_ms = (perf_counter() - started_at) * 1000
         duration_label = f"{duration_ms:.2f}"
         response.headers["X-Process-Time-Ms"] = duration_label
-        response.headers["Server-Timing"] = f'app;dur={duration_label}'
+        response.headers["Server-Timing"] = f"app;dur={duration_label}"
         if request.url.path.startswith("/api/"):
             logger.info(
                 "backend.request.completed",

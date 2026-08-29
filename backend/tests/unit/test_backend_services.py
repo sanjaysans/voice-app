@@ -210,7 +210,9 @@ def test_provider_account_admin_service_updates_existing_account(session, seeded
     assert updated.has_config is True
 
 
-def test_provider_account_admin_service_runs_health_check(session, seeded_domain, monkeypatch) -> None:
+def test_provider_account_admin_service_runs_health_check(
+    session, seeded_domain, monkeypatch
+) -> None:
     service = ProviderAccountAdminService(session)
 
     created = service.create_account(
@@ -488,7 +490,9 @@ def test_call_review_service_supports_create_update_and_delete(session, seeded_d
     assert deleted is True
 
 
-def test_live_test_session_service_persists_and_updates_browser_sessions(session, seeded_domain) -> None:
+def test_live_test_session_service_persists_and_updates_browser_sessions(
+    session, seeded_domain
+) -> None:
     service = LiveTestSessionService(session)
     stt_account = ProviderAccountAdminService(session).create_account(
         "voice-demo",

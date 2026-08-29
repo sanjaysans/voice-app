@@ -8,12 +8,25 @@ export type VendorStack = {
   tts: string;
 };
 
+export type VariableDataType = "text" | "number" | "boolean" | "date" | "datetime" | "enum";
+
+export type AgentVariable = {
+  key: string;
+  label: string;
+  description: string;
+  dataType: VariableDataType;
+  required: boolean;
+  defaultValue?: string | number | boolean;
+  options: string[];
+};
+
 export type FlowNode = {
   id: string;
   label: string;
   x: number;
   y: number;
   tone: Exclude<Tone, "danger">;
+  nodeType?: "state" | "end_call";
   state: string;
   prompt: string;
   tools: string[];
@@ -55,6 +68,7 @@ export type Agent = {
   segment: string;
   goal: string;
   stack: VendorStack;
+  variables: AgentVariable[];
   runtimeProfile: AgentRuntimeProfile;
   flowNodes: FlowNode[];
   flowEdges: FlowEdge[];
@@ -353,6 +367,19 @@ export function createFlowNodes(name = "Lead qualification voice agent"): FlowNo
       tools: [],
       knowledge: [],
       vendors: { ...defaultStack }
+    },
+    {
+      id: "end_call",
+      label: "End call",
+      x: 668,
+      y: 420,
+      tone: "warning",
+      nodeType: "end_call",
+      state: "Generate the closing note and terminate the call",
+      prompt: "Generate a concise, polite closing note, play it once, then terminate the call without waiting for another user turn.",
+      tools: [],
+      knowledge: [],
+      vendors: { ...defaultStack }
     }
   ];
 }
@@ -392,6 +419,27 @@ const defaultEdges: FlowEdge[] = [
     targetId: "escalation",
     label: "Cannot complete in bot",
     condition: "Escalate if the workflow cannot complete the promised next action safely."
+  },
+  {
+    id: "edge_convert_end_call",
+    sourceId: "convert",
+    targetId: "end_call",
+    label: "Next step complete",
+    condition: "The conversion path completes its agreed next action."
+  },
+  {
+    id: "edge_follow_up_end_call",
+    sourceId: "follow_up",
+    targetId: "end_call",
+    label: "Follow-up captured",
+    condition: "The callback or follow-up disposition is captured."
+  },
+  {
+    id: "edge_escalation_end_call",
+    sourceId: "escalation",
+    targetId: "end_call",
+    label: "Handoff complete",
+    condition: "The handoff summary is complete and the call can be closed."
   }
 ];
 
@@ -407,6 +455,7 @@ export const initialAgents: Agent[] = [
     segment: "Inbound acquisition",
     goal: "Qualify high-intent callers and route them to the next best action.",
     stack: { ...defaultStack },
+    variables: [],
     runtimeProfile: buildDefaultRuntimeProfile(),
     flowNodes: createFlowNodes("Growth inbound"),
     flowEdges: defaultEdges,
@@ -424,6 +473,7 @@ export const initialAgents: Agent[] = [
     segment: "Outbound recovery",
     goal: "Recover dormant opportunities and route promising accounts to the right follow-up.",
     stack: { stt: "Deepgram", llm: "GPT-4.1", tts: "Cartesia" },
+    variables: [],
     runtimeProfile: buildDefaultRuntimeProfile(),
     flowNodes: createFlowNodes("Pipeline reactivation").map((node) =>
       node.id === "follow_up"
@@ -445,6 +495,7 @@ export const initialAgents: Agent[] = [
     segment: "Cross-vertical",
     goal: "Stay reusable across industries while still capturing structured outcomes.",
     stack: { stt: "Deepgram", llm: "GPT-4.1", tts: "Cartesia" },
+    variables: [],
     runtimeProfile: buildDefaultRuntimeProfile(),
     flowNodes: createFlowNodes("General conversion desk"),
     flowEdges: defaultEdges,
@@ -631,6 +682,7 @@ export function createAgent(name: string, mode: AgentCreationMode = "template"):
     segment: "",
     goal: "",
     stack: { ...defaultStack },
+    variables: [],
     runtimeProfile: buildDefaultRuntimeProfile(),
     flowNodes: isTemplate ? createFlowNodes(name) : [],
     flowEdges: isTemplate ? defaultEdges : [],

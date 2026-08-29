@@ -5,8 +5,9 @@ import { useRouter } from "next/navigation";
 import { ArrowLeft, Plus, Save, Trash2 } from "lucide-react";
 import { AgentFlowCanvas, autoArrangeFlowNodes } from "@/components/agent-flow-canvas";
 import { ConfigFields } from "@/components/config-fields";
+import { PromptEditor } from "@/components/prompt-editor";
 import { useMockApp } from "@/lib/mock-app";
-import type { Agent, FlowEdge } from "@/lib/mock-data";
+import type { Agent, AgentVariable, FlowEdge, VariableDataType } from "@/lib/mock-data";
 import { useAsyncAction, useKeyedAsyncAction } from "@/lib/use-async-action";
 import {
   Badge,
@@ -47,6 +48,15 @@ const editorTabs = [
 type EditorTab = (typeof editorTabs)[number]["id"];
 type LeaveIntent = { type: "route"; href: string } | { type: "back" } | null;
 
+const emptyVariable: AgentVariable = {
+  key: "",
+  label: "",
+  description: "",
+  dataType: "text",
+  required: false,
+  options: [],
+};
+
 function cloneAgent(agent: Agent) {
   return JSON.parse(JSON.stringify(agent)) as Agent;
 }
@@ -75,13 +85,14 @@ function buildTransitionDraft(sourceId: string, nodes: Agent["flowNodes"], edges
 }
 
 function buildNodeDraft(agent: Agent) {
-  const nextIndex = agent.flowNodes.length + 1;
+  const nextIndex = agent.flowNodes.filter((node) => node.nodeType !== "end_call").length + 1;
   return {
     id: `state_${nextIndex}_${Math.random().toString(36).slice(2, 5)}`,
     label: nextIndex === 1 ? "Entry state" : `State ${nextIndex}`,
     x: 80 + ((nextIndex - 1) % 3) * 280,
     y: 120 + Math.floor((nextIndex - 1) / 3) * 180,
     tone: "neutral" as const,
+    nodeType: "state" as const,
     state: nextIndex === 1 ? "Open the conversation" : "Define this step objective",
     prompt:
       nextIndex === 1
@@ -123,6 +134,11 @@ export function AgentStudioScreen({ agentId }: { agentId?: string }) {
   const [selectedStateId, setSelectedStateId] = useState("");
   const [transitionToDelete, setTransitionToDelete] = useState<FlowEdge | null>(null);
   const [stateToDelete, setStateToDelete] = useState<{ id: string; label: string } | null>(null);
+  const [variableToDelete, setVariableToDelete] = useState<AgentVariable | null>(null);
+  const [variableDraft, setVariableDraft] = useState(emptyVariable);
+  const [variableOptionsInput, setVariableOptionsInput] = useState("");
+  const [isVariableOpen, setIsVariableOpen] = useState(false);
+  const [variableError, setVariableError] = useState("");
   const [leaveIntent, setLeaveIntent] = useState<LeaveIntent>(null);
 
   useEffect(() => {
@@ -283,6 +299,9 @@ export function AgentStudioScreen({ agentId }: { agentId?: string }) {
   }
 
   function removeState(stateId: string) {
+    if (draftAgent?.flowNodes.find((node) => node.id === stateId)?.nodeType === "end_call") {
+      return;
+    }
     updateDraft((agent) => ({
       ...agent,
       flowNodes: agent.flowNodes.filter((node) => node.id !== stateId),
@@ -303,6 +322,59 @@ export function AgentStudioScreen({ agentId }: { agentId?: string }) {
     }));
   }
 
+  function openVariableModal() {
+    setVariableDraft(emptyVariable);
+    setVariableOptionsInput("");
+    setVariableError("");
+    setIsVariableOpen(true);
+  }
+
+  function addVariable() {
+    const key = variableDraft.key.trim().toLowerCase();
+    const label = variableDraft.label.trim();
+    if (!/^[a-z][a-z0-9_]*$/.test(key)) {
+      setVariableError("Use lowercase letters, numbers, and underscores; start with a letter.");
+      return;
+    }
+    if (!label) {
+      setVariableError("Add a display label for this variable.");
+      return;
+    }
+    if (draftAgent?.variables?.some((variable) => variable.key === key)) {
+      setVariableError("That variable key already exists.");
+      return;
+    }
+    if (variableDraft.dataType === "enum" && !variableOptionsInput.trim()) {
+      setVariableError("Add at least one option for an enum variable.");
+      return;
+    }
+    updateDraft((agent) => ({
+      ...agent,
+      variables: [
+        ...(agent.variables ?? []),
+        {
+          ...variableDraft,
+          key,
+          label,
+          description: variableDraft.description.trim(),
+          options: variableOptionsInput
+            .split(",")
+            .map((option) => option.trim())
+            .filter(Boolean),
+        },
+      ],
+    }));
+    setIsVariableOpen(false);
+  }
+
+  function removeVariable(key: string) {
+    updateDraft((agent) => ({
+      ...agent,
+      variables: (agent.variables ?? []).filter((variable) => variable.key !== key),
+    }));
+    setVariableToDelete(null);
+  }
+
   function updateTransition(edgeId: string, field: keyof FlowEdge, value: string) {
     updateDraft((agent) => ({
       ...agent,
@@ -313,7 +385,7 @@ export function AgentStudioScreen({ agentId }: { agentId?: string }) {
   }
 
   function addTransition() {
-    if (!draftAgent || !selectedState) {
+    if (!draftAgent || !selectedState || selectedState.nodeType === "end_call") {
       return;
     }
     const nextEdge = buildTransitionDraft(selectedState.id, draftAgent.flowNodes, draftAgent.flowEdges);
@@ -688,22 +760,24 @@ export function AgentStudioScreen({ agentId }: { agentId?: string }) {
               These prompts apply across the workflow. State-specific prompts are configured later in the States tab.
             </p>
           </div>
-          <Textarea
+          <PromptEditor
             label="System prompt"
             rows={10}
             placeholder="Set the shared behavior, tone, policy, and answer boundaries for the full workflow."
             value={draftAgent.sharedPrompt}
-            onChange={(event) => updateDraft((agent) => ({ ...agent, sharedPrompt: event.target.value }))}
+            variables={draftAgent.variables ?? []}
+            onChange={(value) => updateDraft((agent) => ({ ...agent, sharedPrompt: value }))}
           />
-          <Textarea
+          <PromptEditor
             label="Opening message"
             rows={4}
             placeholder="Hello, this is Voice. How can I help you today?"
             value={draftAgent.runtimeProfile.prompt.openingMessage}
-            onChange={(event) =>
+            variables={draftAgent.variables ?? []}
+            onChange={(value) =>
               updateRuntimeSection("prompt", (prompt) => ({
                 ...prompt,
-                openingMessage: event.target.value,
+                openingMessage: value,
               }))
             }
           />
@@ -721,6 +795,44 @@ export function AgentStudioScreen({ agentId }: { agentId?: string }) {
               updateWorkflowSampleRate(Number(event.target.value) as 8000 | 16000 | 24000)
             }
           />
+          <div className="rounded-2xl border border-border bg-[#fafafe] p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h3 className="font-medium text-[#17171F]">Conversation variables</h3>
+                <p className="mt-1 max-w-2xl text-sm leading-6 text-[#6D6D78]">
+                  Define values that can be inserted into the shared prompt, opening message, or any state prompt. Values are supplied when a call starts.
+                </p>
+              </div>
+              <Button size="sm" variant="secondary" onClick={openVariableModal}>
+                <Plus size={14} />
+                Add variable
+              </Button>
+            </div>
+            <div className="mt-4 space-y-2">
+              {(draftAgent.variables ?? []).length ? (
+                (draftAgent.variables ?? []).map((variable) => (
+                  <div key={variable.key} className="flex flex-col gap-2 rounded-xl border border-border bg-white px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-[#17171F]">
+                        {variable.label} <span className="font-mono text-xs text-[#6D6D78]">{"{{" + variable.key + "}}"}</span>
+                      </p>
+                      <p className="mt-1 text-xs text-[#6D6D78]">
+                        {variable.dataType}{variable.required ? " · required" : " · optional"}{variable.description ? ` · ${variable.description}` : ""}
+                      </p>
+                    </div>
+                    <Button variant="ghost" onClick={() => setVariableToDelete(variable)}>
+                      <Trash2 size={15} />
+                      Remove
+                    </Button>
+                  </div>
+                ))
+              ) : (
+                <p className="rounded-xl border border-dashed border-border bg-white px-3 py-4 text-sm text-[#6D6D78]">
+                  No variables defined yet.
+                </p>
+              )}
+            </div>
+          </div>
         </Card>
       ) : null}
 
@@ -784,6 +896,7 @@ export function AgentStudioScreen({ agentId }: { agentId?: string }) {
                     <h2 className="mt-2 text-lg font-semibold text-[#17171F]">{selectedState.label}</h2>
                   </div>
                   <Button
+                    disabled={selectedState.nodeType === "end_call"}
                     variant="ghost"
                     onClick={() => setStateToDelete({ id: selectedState.id, label: selectedState.label })}
                   >
@@ -793,21 +906,36 @@ export function AgentStudioScreen({ agentId }: { agentId?: string }) {
                 </div>
 
                 <Input
+                  disabled={selectedState.nodeType === "end_call"}
                   label="State name"
                   value={selectedState.label}
                   onChange={(event) => updateSelectedState("label", event.target.value)}
                 />
                 <Input
+                  disabled={selectedState.nodeType === "end_call"}
                   label="State objective"
                   value={selectedState.state}
                   onChange={(event) => updateSelectedState("state", event.target.value)}
                 />
-                <Textarea
-                  label="State prompt"
-                  rows={8}
-                  value={selectedState.prompt}
-                  onChange={(event) => updateSelectedState("prompt", event.target.value)}
-                />
+                {selectedState.nodeType === "end_call" ? (
+                  <div className="space-y-2">
+                    <span className="block text-sm font-medium text-[#17171F]">Closing behavior</span>
+                    <div className="rounded-2xl border border-[rgba(217,119,6,0.18)] bg-[rgba(217,119,6,0.06)] px-4 py-4">
+                      <p className="text-sm font-medium text-[#8A5700]">Generated closing response</p>
+                      <p className="mt-1 text-sm leading-6 text-[#8A5700]">
+                        End call is a fixed terminal node. The runtime generates a concise closing note from the conversation, plays it once, and ends the call without waiting for another reply.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <PromptEditor
+                    label="State prompt"
+                    rows={8}
+                    value={selectedState.prompt}
+                    variables={draftAgent.variables ?? []}
+                    onChange={(value) => updateSelectedState("prompt", value)}
+                  />
+                )}
 
                 <div className="rounded-2xl border border-border bg-[#fafafe] p-4">
                   <div className="flex items-start justify-between gap-3">
@@ -818,7 +946,10 @@ export function AgentStudioScreen({ agentId }: { agentId?: string }) {
                       </p>
                     </div>
                     <Button
-                      disabled={!buildTransitionDraft(selectedState.id, draftAgent.flowNodes, draftAgent.flowEdges)}
+                      disabled={
+                        selectedState.nodeType === "end_call" ||
+                        !buildTransitionDraft(selectedState.id, draftAgent.flowNodes, draftAgent.flowEdges)
+                      }
                       size="sm"
                       variant="secondary"
                       onClick={addTransition}
@@ -908,6 +1039,96 @@ export function AgentStudioScreen({ agentId }: { agentId?: string }) {
           </div>
         </div>
       </Card>
+
+      <ConfirmActionModal
+        title="Remove variable"
+        description={
+          variableToDelete
+            ? `Remove ${variableToDelete.label}? Existing prompt tokens will remain unresolved until you remove or replace them.`
+            : "Remove this variable?"
+        }
+        confirmLabel="Remove variable"
+        isOpen={Boolean(variableToDelete)}
+        isPending={deleteAction.pendingKey === `variable:${variableToDelete?.key ?? ""}`}
+        onClose={() => setVariableToDelete(null)}
+        onConfirm={() => {
+          if (!variableToDelete) {
+            return;
+          }
+          void deleteAction.run(`variable:${variableToDelete.key}`, async () => {
+            removeVariable(variableToDelete.key);
+          });
+        }}
+      />
+
+      <Modal
+        title="Add conversation variable"
+        description="Define a typed value that can be supplied before a live call or per evaluation case."
+        isOpen={isVariableOpen}
+        onClose={() => setIsVariableOpen(false)}
+      >
+        <div className="space-y-4">
+          <Input
+            label="Variable key"
+            placeholder="farmer_name"
+            value={variableDraft.key}
+            onChange={(event) => setVariableDraft((current) => ({ ...current, key: event.target.value }))}
+          />
+          <Input
+            label="Display label"
+            placeholder="Farmer name"
+            value={variableDraft.label}
+            onChange={(event) => setVariableDraft((current) => ({ ...current, label: event.target.value }))}
+          />
+          <Select
+            label="Data type"
+            options={[
+              { label: "Text", value: "text" },
+              { label: "Number", value: "number" },
+              { label: "Boolean", value: "boolean" },
+              { label: "Date", value: "date" },
+              { label: "Date and time", value: "datetime" },
+              { label: "Enum", value: "enum" },
+            ]}
+            value={variableDraft.dataType}
+            onChange={(event) =>
+              setVariableDraft((current) => ({
+                ...current,
+                dataType: event.target.value as VariableDataType,
+              }))
+            }
+          />
+          <Input
+            label="Description"
+            placeholder="Used to address the caller naturally"
+            value={variableDraft.description}
+            onChange={(event) => setVariableDraft((current) => ({ ...current, description: event.target.value }))}
+          />
+          {variableDraft.dataType === "enum" ? (
+            <Input
+              label="Allowed options"
+              placeholder="new, returning, unknown"
+              value={variableOptionsInput}
+              onChange={(event) => setVariableOptionsInput(event.target.value)}
+            />
+          ) : null}
+          <label className="flex items-center gap-3 text-sm text-[#17171F]">
+            <input
+              checked={variableDraft.required}
+              onChange={(event) => setVariableDraft((current) => ({ ...current, required: event.target.checked }))}
+              type="checkbox"
+            />
+            Required before a call can start
+          </label>
+          {variableError ? <p className="text-sm text-[#DC2626]">{variableError}</p> : null}
+          <div className="flex justify-end gap-3">
+            <Button variant="secondary" onClick={() => setIsVariableOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={addVariable}>Add variable</Button>
+          </div>
+        </div>
+      </Modal>
 
       <ConfirmActionModal
         title="Delete transition"

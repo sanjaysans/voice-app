@@ -9,6 +9,7 @@ REGISTERED_WORKFLOWS = [
     "post_call_processing",
     "crm_sync",
     "daily_analytics_rollup",
+    "eval_suite_execution",
 ]
 
 

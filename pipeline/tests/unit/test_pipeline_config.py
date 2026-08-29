@@ -23,7 +23,12 @@ def test_pipeline_settings_default_to_console_startup_mode() -> None:
 
 def test_pipeline_settings_require_url_for_dispatch_mode() -> None:
     with pytest.raises(ValueError, match="VOICE_LIVEKIT_URL"):
-        Settings(livekit_startup_mode="dispatch")
+        Settings(
+            livekit_startup_mode="dispatch",
+            livekit_url=None,
+            livekit_api_key=None,
+            livekit_api_secret=None,
+        )
 
 
 def test_pipeline_settings_validate_endpointing_range() -> None:

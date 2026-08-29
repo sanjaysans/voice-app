@@ -1,7 +1,10 @@
+from types import SimpleNamespace
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from voice_backend import app as backend_app
+from voice_backend import dev as backend_dev
 from voice_backend.app import create_app
 from voice_backend.config import Settings
 
@@ -48,6 +51,24 @@ def test_check_database_returns_failure_when_connection_raises(monkeypatch) -> N
 
     assert is_ready is False
     assert "database offline" in detail
+
+
+@pytest.mark.parametrize(
+    ("environment", "should_reload"), [("dev", True), ("test", False), ("prod", False)]
+)
+def test_backend_dev_server_reloads_only_in_dev(monkeypatch, environment, should_reload) -> None:
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        backend_dev,
+        "get_settings",
+        lambda: SimpleNamespace(environment=environment, host="127.0.0.1", port=8100),
+    )
+    monkeypatch.setattr(backend_dev.uvicorn, "run", lambda *args, **kwargs: captured.update(kwargs))
+
+    backend_dev.main()
+
+    assert captured["reload"] is should_reload
 
 
 @pytest.mark.asyncio

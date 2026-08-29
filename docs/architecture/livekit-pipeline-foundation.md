@@ -28,6 +28,8 @@ choosing LiveKit as the transport and worker runtime for v1.
   - OpenAI Responses LLM
   - Cartesia TTS
   - Silero VAD
+- variable-aware workflow prompts with per-call values validated before dispatch
+- a canonical `End call` terminal state that plays one closing note and terminates
 
 ## Why this shape
 
@@ -46,6 +48,8 @@ choosing LiveKit as the transport and worker runtime for v1.
 - `pipeline/src/voice_pipeline/infrastructure/livekit_runtime.py` translates the generic plan into a LiveKit-oriented runtime descriptor
 - `pipeline/src/voice_pipeline/interfaces/livekit/worker.py` is the worker bootstrap boundary
 - `pipeline/src/voice_pipeline/app.py` exposes health, readiness, provider catalog, runtime inspection, and WebRTC session manifest generation
+- `backend/src/voice_backend/services/agent_config.py` normalizes state graphs, adds a terminal
+  node, and closes leaf states without permitting terminal outgoing edges
 
 ## Local-first expectation
 
@@ -56,15 +60,31 @@ choosing LiveKit as the transport and worker runtime for v1.
 
 ## What this does not do yet
 
-- model persisted agent graphs from the database
 - implement telephony trunks, dispatch rules, or SIP lifecycle hooks
 - run post-call jobs or transcript persistence
-- mint browser tokens or expose the actual WebRTC frontend
+- evaluate transition requests inside the worker; v1 passes each configured natural-language
+  condition to the agent, accepts only configured edges, requires transition evidence, and
+  applies a bounded transition budget
+
+## Workflow Prompt Contract
+
+- The shared system prompt is for persona, tone, safety, and global guardrails.
+- The opening message and every state prompt may reference a declared variable using
+  `{{variable_key}}`.
+- Variable definitions are stored in the agent routing configuration with a stable snake_case key,
+  label, data type, required flag, optional default, and enum options where applicable.
+- Live calls validate and normalize values before a room is dispatched. Unknown keys and missing
+  required values fail with a client-visible validation error.
+- Evaluation cases should store their own variable values under `scenario.variables`; the same
+  agent definition is reused while each case supplies its own inputs.
+- A state graph always contains one canonical `end_call` node. Leaf states are wired to it, and it
+  has no outgoing transitions. The runtime generates and plays one closing note when the terminal
+  node is reached, then terminates without waiting for another caller turn. A direct `end_call`
+  action remains available as an idempotent fallback.
 
 ## Next implementation steps
 
-1. add backend endpoints to mint browser session tokens and dispatch this manifest into LiveKit
-2. connect prompt, tools, and routing graph loading to backend-managed agent configuration
-3. persist call state, conversation events, and handoff events through the backend
-4. add deterministic simulation tests for interruption and handoff behavior
-5. add the browser WebRTC client that uses this manifest flow end to end
+1. add deterministic state evaluation and transition telemetry inside the worker
+2. persist call state, conversation events, and handoff events through the backend
+3. add telephony adapters and dispatch rules without changing the workflow contract
+4. add provider-backed evaluation execution using the same variable and terminal contracts

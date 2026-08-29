@@ -42,6 +42,7 @@ const navSections = [
       { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
       { href: "/calls/logs", label: "Call logs", icon: ScrollText },
       { href: "/live", label: "Live", icon: Radio },
+      { href: "/evaluations", label: "Evaluations", icon: Shield },
       { href: "/calls", label: "Calls", icon: Phone, soon: true },
       { href: "/qa-review", label: "QA review", icon: Shield, soon: true },
       { href: "/analytics", label: "Analytics", icon: LineChart, soon: true }

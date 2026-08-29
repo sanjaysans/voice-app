@@ -35,7 +35,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
       const response = await fetch(requestUrl, {
         ...init,
         headers: {
-          "Content-Type": "application/json",
+          ...(init?.body ? { "Content-Type": "application/json" } : {}),
           ...(init?.headers ?? {}),
         },
         credentials: "include",
@@ -73,4 +73,24 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   return await requestPromise;
+}
+
+export async function apiBlob(path: string, init?: RequestInit): Promise<Blob> {
+  beginApiRequest();
+
+  try {
+    const response = await fetch(`${API_BASE}${path}`, {
+      ...init,
+      credentials: "include",
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      throw new ApiError(response.status, `API request failed: ${response.status}`);
+    }
+
+    return await response.blob();
+  } finally {
+    endApiRequest();
+  }
 }

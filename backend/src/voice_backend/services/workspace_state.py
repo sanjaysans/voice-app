@@ -19,6 +19,7 @@ from voice_backend.schemas import (
     WorkspaceRecord,
 )
 from voice_backend.secrets import build_provider_config_preview
+from voice_backend.services.agent_config import normalize_flow_edges, normalize_flow_nodes
 from voice_backend.services.provider_account_admin import to_provider_account_record
 from voice_backend.services.read_cache import get_read_cache, set_read_cache
 
@@ -47,36 +48,11 @@ def _relative_label(timestamp) -> str:
     return f"{days} days ago"
 
 
-def _normalize_flow_edges(raw_edges) -> list[dict[str, str]]:
-    normalized: list[dict[str, str]] = []
-    for index, edge in enumerate(raw_edges or []):
-        if isinstance(edge, dict):
-            normalized.append(
-                {
-                    "id": str(edge.get("id", f"edge_{index}")),
-                    "source_id": str(edge.get("source_id", "")),
-                    "target_id": str(edge.get("target_id", "")),
-                    "label": str(edge.get("label", "")),
-                    "condition": str(edge.get("condition", "")),
-                }
-            )
-        elif isinstance(edge, (list, tuple)) and len(edge) >= 2:
-            normalized.append(
-                {
-                    "id": f"edge_{index}",
-                    "source_id": str(edge[0]),
-                    "target_id": str(edge[1]),
-                    "label": "",
-                    "condition": "",
-                }
-            )
-    return normalized
-
-
 def _build_agent_record(agent) -> AgentStudioRecord:
     latest_version = agent.versions[-1] if agent.versions else None
     routing_config = latest_version.routing_config if latest_version is not None else {}
     vendor_config = latest_version.vendor_config if latest_version is not None else {}
+    flow_nodes = normalize_flow_nodes(routing_config.get("flow_nodes", []))
     return AgentStudioRecord(
         agent_id=agent.id,
         workspace_id=agent.workspace_id,
@@ -94,8 +70,9 @@ def _build_agent_record(agent) -> AgentStudioRecord:
             {"stt": "Deepgram", "llm": "GPT-4.1", "tts": "ElevenLabs"},
         ),
         runtime_profile=vendor_config.get("runtime_profile", {}),
-        flow_nodes=routing_config.get("flow_nodes", []),
-        flow_edges=_normalize_flow_edges(routing_config.get("flow_edges", [])),
+        variables=routing_config.get("variables", []),
+        flow_nodes=flow_nodes,
+        flow_edges=normalize_flow_edges(routing_config.get("flow_edges", []), flow_nodes),
         tools_catalog=routing_config.get("tools_catalog", []),
         knowledge_sources=routing_config.get("knowledge_sources", []),
         latest_version_number=latest_version.version_number if latest_version is not None else None,
@@ -141,6 +118,23 @@ def _call_tone(status: str) -> str:
     return "success" if status == "Completed" else "warning" if status == "Follow-up" else "danger"
 
 
+def _string_record_list(value, *, dict_value: bool = False) -> list:
+    if isinstance(value, dict):
+        return (
+            [{"key": str(key), "value": str(item)} for key, item in value.items()]
+            if dict_value
+            else []
+        )
+    if not isinstance(value, list):
+        return []
+    normalized = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        normalized.append({str(key): str(item_value) for key, item_value in item.items()})
+    return normalized
+
+
 def _build_call_record(call) -> CallReviewRecord:
     resolved = call.resolved_config or {}
     agent = call.agent_version.agent_definition if call.agent_version is not None else None
@@ -163,10 +157,12 @@ def _build_call_record(call) -> CallReviewRecord:
         next_step=str(resolved.get("next_step", "")),
         vendor_trace=str(resolved.get("vendor_trace", "")),
         synced_to_crm=bool(resolved.get("synced_to_crm", False)),
-        extracted_variables=list(resolved.get("extracted_variables", [])),
-        tool_calls=list(resolved.get("tool_calls", [])),
-        guardrails=list(resolved.get("guardrails", [])),
-        transcript=list(resolved.get("transcript", [])),
+        extracted_variables=_string_record_list(
+            resolved.get("extracted_variables", {}), dict_value=True
+        ),
+        tool_calls=_string_record_list(resolved.get("tool_calls", [])),
+        guardrails=[str(item) for item in resolved.get("guardrails", []) if item is not None],
+        transcript=_string_record_list(resolved.get("transcript", [])),
         created_at=call.created_at,
         started_at=call.started_at,
         ended_at=call.ended_at,

@@ -72,6 +72,16 @@ function buildAgent() {
       },
     ],
     flowEdges: [],
+    variables: [
+      {
+        key: "farmer_name",
+        label: "Farmer name",
+        description: "Known caller name",
+        dataType: "text" as const,
+        required: true,
+        options: [],
+      },
+    ],
     toolsCatalog: [],
     knowledgeSources: [],
   };
@@ -166,6 +176,60 @@ describe("AgentStudioScreen", () => {
     await user.click(screen.getAllByRole("button", { name: "STT" })[0] as HTMLElement);
     expect(screen.getByText("Model name or ID")).toBeInTheDocument();
     expect(screen.getByText("Resolved language code")).toBeInTheDocument();
+  });
+
+  it("inserts a variable from the state prompt picker", async () => {
+    const user = userEvent.setup();
+    render(<AgentStudioScreen agentId="agent-1" />);
+
+    await user.click(screen.getByRole("button", { name: "States" }));
+    await user.click(screen.getByRole("button", { name: "Insert variable into State prompt" }));
+    await user.click(screen.getByRole("option", { name: "Farmer name ({{farmer_name}})" }));
+
+    expect(screen.getByRole("textbox", { name: "State prompt" })).toHaveValue(
+      "Confirm intent and decide the right next state.{{farmer_name}}"
+    );
+    expect(screen.getAllByTestId("prompt-variable-token")).toHaveLength(1);
+  });
+
+  it("shows fixed closing behavior instead of an inert prompt editor for End call", async () => {
+    const terminalAgent = {
+      ...buildAgent(),
+      flowNodes: [
+        {
+          id: "end_call",
+          label: "End call",
+          x: 120,
+          y: 120,
+          tone: "warning" as const,
+          nodeType: "end_call" as const,
+          state: "Generate the closing note and terminate the call",
+          prompt: "Generate the closing note and terminate the call.",
+          tools: [],
+          knowledge: [],
+          vendors: {
+            stt: "Deepgram",
+            llm: "OpenAI",
+            tts: "Cartesia",
+          },
+        },
+      ],
+    };
+    mockUseMockApp.mockReturnValue(
+      buildContext({
+        agents: [terminalAgent],
+        selectedAgent: terminalAgent,
+      })
+    );
+    const user = userEvent.setup();
+    render(<AgentStudioScreen agentId="agent-1" />);
+
+    await user.click(screen.getByRole("button", { name: "States" }));
+
+    expect(screen.getByText("Closing behavior")).toBeInTheDocument();
+    expect(screen.getByText("Generated closing response")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "State prompt" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Insert variable into State prompt" })).not.toBeInTheDocument();
   });
 
   it("keeps edits local until save is clicked", async () => {

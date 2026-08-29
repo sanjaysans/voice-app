@@ -34,6 +34,15 @@ Keep realtime call handling thin and move retries, enrichment, sync, and analyti
 - stale delivery retries
 - knowledge sync refresh
 
+## Evaluation execution
+
+Evaluation runs are durable job work, not request-path work in production. The backend creates
+versioned run records and the `eval_suite_execution` workflow owns case scheduling, bounded
+retries for infrastructure failures, cancellation, and result finalization. The current local
+vertical slice executes the deterministic text strategy inline so it remains usable without
+Temporal or paid provider credentials; the workflow contract is already registered for the
+worker integration.
+
 ## Logging rules
 
 All services should emit structured logs with:

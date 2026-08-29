@@ -24,6 +24,14 @@ Keep the control plane clean, typed, and independent from pipeline runtime detai
 7. Run the backend latency harness before marking API work complete:
    `uv run --project backend python backend/scripts/profile_api_latency.py`
 8. When browser timings look high, inspect `X-Process-Time-Ms` or `Server-Timing` first to separate backend handler time from frontend or network overhead.
+9. Keep agent configuration generic: shared prompts define persona and global guardrails, while
+   state prompts define conversation behavior and transitions.
+10. Validate declared call variables at the API boundary. Reject unknown keys and missing required
+    values before dispatch, and never store provider secrets as call variables.
+11. Normalize every workflow graph to one terminal `end_call` node. Leaf states must point to it,
+    and terminal nodes must not have outgoing transitions.
+12. Enable backend source reload only in the `dev` environment. Test and production launchers must
+    run without watch mode.
 
 ## Avoid
 

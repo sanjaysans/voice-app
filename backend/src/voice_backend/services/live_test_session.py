@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from sqlalchemy.orm import Session
 
@@ -13,6 +14,7 @@ from voice_backend.repositories import (
     WorkspaceRepository,
 )
 from voice_backend.schemas import (
+    AgentVariableDefinition,
     BrowserRtcCartesiaInput,
     BrowserRtcDeepgramInput,
     BrowserRtcOpenAiInput,
@@ -24,6 +26,7 @@ from voice_backend.schemas import (
     LiveTestSessionUpdateInput,
 )
 from voice_backend.secrets import decrypt_provider_config
+from voice_backend.services.agent_config import normalize_flow_edges, normalize_flow_nodes
 
 
 def _status_label_from_lifecycle(lifecycle_status: str) -> str:
@@ -88,49 +91,179 @@ def _coerce_float(value: object, fallback: float) -> float:
         return fallback
 
 
-def _build_workflow_prompt(shared_prompt: str, description: str, flow_nodes, flow_edges) -> str:
+_VARIABLE_TOKEN_PATTERN = re.compile(r"\{\{\s*([a-z][a-z0-9_]*)\s*\}\}")
+
+
+def _normalize_variable_value(definition: AgentVariableDefinition, value: object) -> object:
+    if definition.data_type == "text":
+        return str(value)
+    if definition.data_type == "number":
+        try:
+            return float(value) if "." in str(value) else int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"variable '{definition.key}' must be a number") from exc
+    if definition.data_type == "boolean":
+        if isinstance(value, bool):
+            return value
+        normalized = str(value).strip().lower()
+        if normalized in {"true", "1", "yes", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "off"}:
+            return False
+        raise ValueError(f"variable '{definition.key}' must be a boolean")
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"variable '{definition.key}' must be a non-empty string")
+    normalized_value = value.strip()
+    if definition.data_type == "date":
+        try:
+            date.fromisoformat(normalized_value)
+        except ValueError as exc:
+            raise ValueError(f"variable '{definition.key}' must be an ISO date") from exc
+    if definition.data_type == "datetime":
+        try:
+            datetime.fromisoformat(normalized_value)
+        except ValueError as exc:
+            raise ValueError(f"variable '{definition.key}' must be an ISO datetime") from exc
+    if definition.data_type == "enum" and normalized_value not in definition.options:
+        raise ValueError(
+            f"variable '{definition.key}' must be one of: {', '.join(definition.options)}"
+        )
+    return normalized_value
+
+
+def _resolve_variable_inputs(raw_definitions: object, raw_values: object) -> dict[str, object]:
+    definitions = []
+    for raw_definition in raw_definitions if isinstance(raw_definitions, list) else []:
+        try:
+            definitions.append(AgentVariableDefinition.model_validate(raw_definition))
+        except ValueError as exc:
+            raise ValueError("agent variable definitions are invalid") from exc
+
+    values = raw_values if isinstance(raw_values, dict) else {}
+    definition_keys = [definition.key for definition in definitions]
+    if len(definition_keys) != len(set(definition_keys)):
+        raise ValueError("agent variable definitions contain duplicate keys")
+    known_keys = set(definition_keys)
+    unknown_keys = sorted(set(values) - known_keys)
+    if unknown_keys:
+        raise ValueError(f"unknown agent variables: {', '.join(unknown_keys)}")
+
+    resolved: dict[str, object] = {}
+    for definition in definitions:
+        value = values.get(definition.key, definition.default_value)
+        if value is None:
+            if definition.required:
+                raise ValueError(f"required agent variable '{definition.key}' is missing")
+            continue
+        resolved[definition.key] = _normalize_variable_value(definition, value)
+    return resolved
+
+
+def _render_prompt(text: str, variables: dict[str, object]) -> str:
+    return _VARIABLE_TOKEN_PATTERN.sub(lambda match: str(variables.get(match.group(1), "")), text)
+
+
+def _validate_prompt_variables(text: str, definitions: list[AgentVariableDefinition]) -> None:
+    declared_keys = {definition.key for definition in definitions}
+    unknown_keys = sorted(set(_VARIABLE_TOKEN_PATTERN.findall(text)) - declared_keys)
+    if unknown_keys:
+        raise ValueError("prompt references undeclared agent variables: " + ", ".join(unknown_keys))
+
+
+def _render_workflow(
+    flow_nodes: list[dict[str, object]],
+    flow_edges: list[dict[str, object]],
+    variables: dict[str, object],
+) -> dict[str, list[dict[str, object]]]:
+    nodes = []
+    for node in flow_nodes:
+        rendered = dict(node)
+        rendered["state"] = _render_prompt(_normalize_string(node.get("state")), variables)
+        rendered["prompt"] = _render_prompt(_normalize_string(node.get("prompt")), variables)
+        nodes.append(rendered)
+    edges = []
+    for edge in flow_edges:
+        rendered = dict(edge)
+        rendered["condition"] = _render_prompt(_normalize_string(edge.get("condition")), variables)
+        edges.append(rendered)
+    return {"nodes": nodes, "edges": edges}
+
+
+def _build_workflow_prompt(
+    shared_prompt: str,
+    description: str,
+    flow_nodes,
+    flow_edges,
+    variable_definitions: object,
+    variables: dict[str, object],
+) -> str:
+    raw_definitions = variable_definitions if isinstance(variable_definitions, list) else []
+    definitions = [
+        AgentVariableDefinition.model_validate(raw_definition) for raw_definition in raw_definitions
+    ]
+    _validate_prompt_variables(shared_prompt, definitions)
+    node_labels = {
+        str(node.get("id")): _normalize_string(node.get("label"))
+        for node in flow_nodes or []
+        if isinstance(node, dict)
+    }
     state_instructions = []
     for node in flow_nodes or []:
         if not isinstance(node, dict):
             continue
         transitions = []
         for edge in flow_edges or []:
-            if not isinstance(edge, dict) or str(edge.get("source_id", "")) != str(node.get("id", "")):
+            if not isinstance(edge, dict) or str(edge.get("source_id", "")) != str(
+                node.get("id", "")
+            ):
                 continue
             transitions.append(
-                
-                    f"{_normalize_string(edge.get('label'), 'Transition')} -> "
-                    f"{_normalize_string(edge.get('target_id'))}: "
-                    f"{_normalize_string(edge.get('condition'), 'Use the configured next state when appropriate.')}"
-                
+                f"{_normalize_string(edge.get('label'), 'Transition')} -> "
+                f"{node_labels.get(str(edge.get('target_id')), _normalize_string(edge.get('target_id')))}: "
+                f"{_render_prompt(_normalize_string(edge.get('condition'), 'Use the configured next state when appropriate.'), variables)}"
             )
-        state_instructions.append(
-            "\n".join(
-                [
-                    f"State: {_normalize_string(node.get('label'))}",
-                    f"Objective: {_normalize_string(node.get('state'))}",
-                    f"Prompt: {_normalize_string(node.get('prompt'))}",
-                    "Transitions:",
-                    *(
-                        [f"- {line}" for line in transitions]
-                        if transitions
-                        else ["- End or hold the conversation when no transition applies."]
-                    ),
-                ]
+        _validate_prompt_variables(_normalize_string(node.get("state")), definitions)
+        _validate_prompt_variables(_normalize_string(node.get("prompt")), definitions)
+        for edge in flow_edges or []:
+            if isinstance(edge, dict) and str(edge.get("source_id", "")) == str(node.get("id", "")):
+                _validate_prompt_variables(_normalize_string(edge.get("condition")), definitions)
+        instructions = [
+            f"State: {_normalize_string(node.get('label'))}",
+            f"Objective: {_render_prompt(_normalize_string(node.get('state')), variables)}",
+            f"Prompt: {_render_prompt(_normalize_string(node.get('prompt')), variables)}",
+        ]
+        if node.get("node_type") == "end_call":
+            instructions.append(
+                "Terminal state: call the end_call runtime action with a concise closing note, play it once, and terminate the call without waiting for another user turn."
             )
+        instructions.extend(
+            [
+                "Transitions:",
+                *(
+                    [f"- {line}" for line in transitions]
+                    if transitions
+                    else ["- End or hold the conversation when no transition applies."]
+                ),
+            ]
         )
+        state_instructions.append("\n".join(instructions))
     workflow_states = "\n\n".join(state_instructions)
+    variable_lines = []
+    for definition in definitions:
+        value = variables.get(definition.key, "not provided")
+        variable_lines.append(
+            f"- {definition.key} ({definition.data_type}, {definition.label}): {value}"
+        )
 
     return "\n\n".join(
-        [
-            part
-            for part in [
-                shared_prompt,
-                f"Workflow purpose: {description}" if description else "",
-                f"Workflow states:\n{workflow_states}" if workflow_states else "",
-            ]
-            if part
+        part
+        for part in [
+            _render_prompt(shared_prompt, variables),
+            f"Workflow purpose: {description}" if description else "",
+            f"Call variables:\n{chr(10).join(variable_lines)}" if variable_lines else "",
+            f"Workflow states:\n{workflow_states}" if workflow_states else "",
         ]
+        if part
     )
 
 
@@ -221,7 +354,9 @@ class LiveTestSessionService:
             tenant.id, tts_profile.get("providerAccountId")
         )
         telephony_account = (
-            self.provider_accounts.get_for_tenant(tenant.id, telephony_profile.get("providerAccountId"))
+            self.provider_accounts.get_for_tenant(
+                tenant.id, telephony_profile.get("providerAccountId")
+            )
             if telephony_profile.get("providerAccountId")
             else None
         )
@@ -231,26 +366,49 @@ class LiveTestSessionService:
         stt_config = decrypt_provider_config(stt_account.config or {})
         llm_config = decrypt_provider_config(llm_account.config or {})
         tts_config = decrypt_provider_config(tts_account.config or {})
-        telephony_config = decrypt_provider_config(telephony_account.config or {}) if telephony_account else {}
+        telephony_config = (
+            decrypt_provider_config(telephony_account.config or {}) if telephony_account else {}
+        )
         stt_api_key = _normalize_string(stt_config.get("api_key"))
         llm_api_key = _normalize_string(llm_config.get("api_key"))
         tts_api_key = _normalize_string(tts_config.get("api_key"))
         if not stt_api_key or not llm_api_key or not tts_api_key:
             return None
 
+        flow_nodes = normalize_flow_nodes(routing_config.get("flow_nodes", []))
+        flow_edges = normalize_flow_edges(routing_config.get("flow_edges", []), flow_nodes)
+        resolved_variables = _resolve_variable_inputs(
+            routing_config.get("variables", []), payload.variables
+        )
+        variable_definitions = [
+            AgentVariableDefinition.model_validate(item)
+            for item in routing_config.get("variables", [])
+            if isinstance(item, dict)
+        ]
+        _validate_prompt_variables(
+            _normalize_string(prompt_profile.get("openingMessage")), variable_definitions
+        )
         prompt = BrowserRtcPromptInput(
             system_prompt=_build_workflow_prompt(
                 _normalize_string(routing_config.get("shared_prompt")),
                 _normalize_string(routing_config.get("description")),
-                routing_config.get("flow_nodes", []),
-                routing_config.get("flow_edges", []),
+                flow_nodes,
+                flow_edges,
+                routing_config.get("variables", []),
+                resolved_variables,
             )
             or BrowserRtcPromptInput().system_prompt,
-            opening_message=_normalize_string(prompt_profile.get("openingMessage")) or None,
+            opening_message=(
+                _render_prompt(
+                    _normalize_string(prompt_profile.get("openingMessage")), resolved_variables
+                )
+                or None
+            ),
         )
-        launch_number = _normalize_string(payload.metadata.get("launch_number")) or _normalize_string(
-            telephony_profile.get("phoneNumber")
-        )
+        rendered_workflow = _render_workflow(flow_nodes, flow_edges, resolved_variables)
+        launch_number = _normalize_string(
+            payload.metadata.get("launch_number")
+        ) or _normalize_string(telephony_profile.get("phoneNumber"))
         if not launch_number:
             phone_numbers = _parse_csv_values(telephony_config.get("phone_numbers"))
             launch_number = phone_numbers[0] if phone_numbers else "browser-live"
@@ -317,6 +475,8 @@ class LiveTestSessionService:
                 ),
                 vad=payload.vad,
                 metadata=metadata,
+                variables=resolved_variables,
+                workflow=rendered_workflow,
                 participant_name=payload.participant_name,
             ),
         )
@@ -348,7 +508,9 @@ class LiveTestSessionService:
         session_payload = getattr(session_record, "session", {}) or {}
         runtime_payload = getattr(session_record, "runtime", {}) or {}
         room_name = getattr(session_record, "room_name", serialized_session.get("room_name", ""))
-        dispatch_id = getattr(session_record, "dispatch_id", serialized_session.get("dispatch_id", ""))
+        dispatch_id = getattr(
+            session_record, "dispatch_id", serialized_session.get("dispatch_id", "")
+        )
         participant_identity = getattr(
             session_record,
             "participant_identity",
@@ -385,6 +547,7 @@ class LiveTestSessionService:
                 "outcome": "Queued for live test",
                 "next_step": "Join the room and speak with the agent.",
                 "vendor_trace": str(metadata.get("vendor_trace", "")),
+                "variables": payload.variables,
                 "synced_to_crm": False,
                 "extracted_variables": [],
                 "tool_calls": [],
