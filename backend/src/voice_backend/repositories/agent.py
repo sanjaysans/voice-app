@@ -1,7 +1,7 @@
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session, selectinload
 
-from voice_backend.models import AgentDefinition, AgentVersion
+from voice_backend.models import AgentDefinition, AgentVersion, Tenant, Workspace
 
 
 class AgentRepository:
@@ -67,6 +67,33 @@ class AgentRepository:
             .execution_options(populate_existing=True)
         )
         return self.session.scalar(statement)
+
+    def get_browser_session_dependencies(
+        self, tenant_slug: str, workspace_id, agent_definition_id
+    ) -> tuple[Tenant, Workspace, AgentDefinition, AgentVersion] | None:
+        """Load the immutable browser-session snapshot in one database round trip."""
+        statement = (
+            select(Tenant, Workspace, AgentDefinition, AgentVersion)
+            .join(Workspace, Workspace.tenant_id == Tenant.id)
+            .join(
+                AgentDefinition,
+                AgentDefinition.workspace_id == Workspace.id,
+            )
+            .join(
+                AgentVersion,
+                AgentVersion.agent_definition_id == AgentDefinition.id,
+            )
+            .where(
+                Tenant.slug == tenant_slug,
+                Workspace.id == workspace_id,
+                AgentDefinition.id == agent_definition_id,
+                AgentDefinition.tenant_id == Tenant.id,
+            )
+            .order_by(desc(AgentVersion.version_number))
+            .limit(1)
+        )
+        row = self.session.execute(statement).first()
+        return row
 
     def latest_version_for(self, agent_definition_id) -> AgentVersion | None:
         statement = (

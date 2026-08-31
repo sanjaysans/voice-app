@@ -12,5 +12,6 @@ async def test_jobs_ready_endpoint_lists_workflows() -> None:
     ) as client:
         response = await client.get("/ready")
 
-        assert response.status_code == 200
-        assert "crm_sync" in response.json()["registered_workflows"]
+        assert response.status_code == 503
+        assert response.json()["registered_workflows"] == []
+        assert response.json()["status"] == "degraded"

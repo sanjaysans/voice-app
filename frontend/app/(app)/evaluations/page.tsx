@@ -176,7 +176,6 @@ export default function EvaluationsPage() {
                   key={suite.suite_id}
                   href={`/evaluations/${suite.suite_id}`}
                   className="group flex flex-wrap items-center justify-between gap-5 py-5 first:pt-0 last:pb-0"
-                  prefetch={false}
                 >
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-3">

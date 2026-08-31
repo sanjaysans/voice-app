@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 
 from voice_backend.logging import get_logger
-from voice_backend.repositories import TenantRepository, WorkspaceRepository
+from voice_backend.repositories import MembershipRepository, TenantRepository, WorkspaceRepository
 from voice_backend.schemas import WorkspaceCreateInput, WorkspaceRecord, WorkspaceUpdateInput
 from voice_backend.services.read_cache import clear_read_cache, get_read_cache, set_read_cache
 
@@ -22,6 +22,7 @@ class WorkspaceAdminService:
     def __init__(self, session: Session) -> None:
         self.tenants = TenantRepository(session)
         self.workspaces = WorkspaceRepository(session)
+        self.memberships = MembershipRepository(session)
 
     def list_workspaces(self, tenant_slug: str, *, tenant_id=None) -> list[WorkspaceRecord] | None:
         cache_key = ("workspace.list", tenant_slug, str(tenant_id or ""))
@@ -44,7 +45,7 @@ class WorkspaceAdminService:
         )
 
     def create_workspace(
-        self, tenant_slug: str, payload: WorkspaceCreateInput
+        self, tenant_slug: str, payload: WorkspaceCreateInput, *, owner_user_id=None
     ) -> WorkspaceRecord | None:
         tenant = self.tenants.get_by_slug(tenant_slug)
         if tenant is None:
@@ -52,6 +53,8 @@ class WorkspaceAdminService:
         workspace = self.workspaces.create(tenant.id, payload.name, is_default=payload.is_default)
         if workspace.is_default:
             self.workspaces.clear_default_for_tenant(tenant.id, except_workspace_id=workspace.id)
+        if owner_user_id is not None:
+            self.memberships.create(tenant.id, workspace.id, owner_user_id, "admin")
         clear_read_cache()
         logger.info("workspace.created", tenant_id=str(tenant.id), workspace_id=str(workspace.id))
         return _to_record(workspace)

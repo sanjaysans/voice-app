@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildDefaultConnectionConfig,
   mergeRuntimeProfile,
+  pickConnectionConfig,
   resolveProviderHealthCheckEndpoint,
   resolveVendorLanguageCode,
 } from "@/lib/voice-stack";
@@ -14,6 +15,18 @@ describe("voice-stack helpers", () => {
     expect(config.voiceId).toBeUndefined();
     expect(config.language).toBeUndefined();
     expect(config.model).toBeUndefined();
+    expect(config.ui_status).toBeUndefined();
+  });
+
+  it("only sends supported connection fields and omits blank credentials", () => {
+    expect(
+      pickConnectionConfig("llm", "openai", {
+        display_name: "Primary LLM",
+        api_key: "",
+        model: "gpt-4.1",
+        ui_status: "Connected",
+      })
+    ).toEqual({ display_name: "Primary LLM" });
   });
 
   it("resolves the provider health-check endpoint from the definition", () => {

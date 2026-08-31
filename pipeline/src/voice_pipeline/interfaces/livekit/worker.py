@@ -1,6 +1,7 @@
 import asyncio
 import inspect
 import json
+import time
 from collections.abc import Callable
 from functools import partial
 from importlib import import_module
@@ -22,6 +23,8 @@ from voice_pipeline.logging import configure_logging, get_logger
 _TERMINATION_TASKS: set[asyncio.Task[None]] = set()
 SESSION_START_TIMEOUT_SECONDS = 45
 SPEECH_TIMEOUT_SECONDS = 45
+SESSION_SHUTDOWN_TIMEOUT_SECONDS = 10
+RUNTIME_EVENT_TIMEOUT_SECONDS = 2
 
 
 def load_livekit_sdk() -> dict[str, Any]:
@@ -115,6 +118,41 @@ async def _maybe_await(value: object) -> object:
     return value
 
 
+async def _shutdown_session(session: object) -> None:
+    close = getattr(session, "aclose", None)
+    if close is not None:
+        try:
+            await asyncio.wait_for(
+                _maybe_await(close()), timeout=SESSION_SHUTDOWN_TIMEOUT_SECONDS
+            )
+            return
+        except Exception as exc:
+            get_logger(__name__).error(
+                "pipeline.session.aclose_failed",
+                error=str(exc),
+            )
+    shutdown = getattr(session, "shutdown", None)
+    if shutdown is not None:
+        try:
+            await asyncio.wait_for(
+                _maybe_await(shutdown(drain=False)), timeout=SESSION_SHUTDOWN_TIMEOUT_SECONDS
+            )
+        except Exception as exc:
+            get_logger(__name__).error(
+                "pipeline.session.shutdown_failed",
+                error=str(exc),
+            )
+
+
+async def _shutdown_session_safely(session: object) -> None:
+    shutdown_task = asyncio.create_task(_shutdown_session(session))
+    try:
+        await asyncio.shield(shutdown_task)
+    except asyncio.CancelledError:
+        await asyncio.shield(shutdown_task)
+        raise
+
+
 async def _publish_runtime_event(room: object | None, event_type: str, payload: dict[str, object]) -> None:
     if room is None:
         return
@@ -122,26 +160,44 @@ async def _publish_runtime_event(room: object | None, event_type: str, payload: 
     publish_data = getattr(local_participant, "publish_data", None)
     if publish_data is None:
         return
-    try:
-        result = publish_data(
-            json.dumps({"event_type": event_type, **payload}).encode("utf-8"),
-            reliable=True,
-            topic="voice_runtime",
-        )
-        await _maybe_await(result)
-    except Exception:
-        return
+    for attempt in range(2):
+        try:
+            result = publish_data(
+                json.dumps({"event_type": event_type, **payload}).encode("utf-8"),
+                reliable=True,
+                topic="voice_runtime",
+            )
+            await asyncio.wait_for(
+                _maybe_await(result), timeout=RUNTIME_EVENT_TIMEOUT_SECONDS
+            )
+            return
+        except Exception as exc:
+            if attempt == 1:
+                get_logger(__name__).warning(
+                    "pipeline.runtime_event.publish_failed",
+                    event_type=event_type,
+                    error=str(exc),
+                )
+                return
+            await asyncio.sleep(0.05)
 
 
 async def _schedule_shutdown_after_speech(
     session: AgentSession,
     workflow: WorkflowGraph,
     speech: object,
+    room: object | None = None,
 ) -> None:
-    if hasattr(speech, "wait_for_playout"):
-        await speech.wait_for_playout()
-    workflow.mark_ended()
-    await _maybe_await(session.shutdown(drain=False))
+    try:
+        if hasattr(speech, "wait_for_playout"):
+            await asyncio.wait_for(
+                _maybe_await(speech.wait_for_playout()), timeout=SPEECH_TIMEOUT_SECONDS
+            )
+        await _drain_runtime_event_tasks(session)
+        workflow.mark_ended()
+        await _publish_runtime_event(room, "workflow.ended", {"state_id": workflow.current.node_id})
+    finally:
+        await _shutdown_session_safely(session)
 
 
 def _build_end_call_tool(session: AgentSession, workflow: WorkflowGraph, room: object | None = None):
@@ -158,13 +214,17 @@ def _build_end_call_tool(session: AgentSession, workflow: WorkflowGraph, room: o
         if not workflow.begin_termination():
             return "The call has already ended."
         closing_note = note.strip() or "Thank you for your time. Goodbye."
-        await _publish_runtime_event(room, "workflow.ended", {"state_id": workflow.current.node_id})
-        speech = await _speak(session, closing_note, allow_interruptions=False)
+        try:
+            speech = await _speak(session, closing_note, allow_interruptions=False)
+        except Exception as exc:
+            get_logger(__name__).error("pipeline.workflow.closing_speech_failed", error=str(exc))
+            await _shutdown_session_safely(session)
+            raise
         termination_task = asyncio.create_task(
-            _schedule_shutdown_after_speech(session, workflow, speech)
+            _schedule_shutdown_after_speech(session, workflow, speech, room)
         )
         _TERMINATION_TASKS.add(termination_task)
-        termination_task.add_done_callback(_TERMINATION_TASKS.discard)
+        termination_task.add_done_callback(_handle_termination_task)
         return "The closing note was played and the call was terminated."
 
     return end_call
@@ -205,6 +265,7 @@ def _build_transition_tool(
                     session,
                     workflow,
                     "The conversation reached its safety limit. Generate a brief polite closing note and end the call now.",
+                    room,
                 )
                 return "Workflow safety limit reached. The call is being closed."
             return f"Transition rejected: {exc}"
@@ -238,6 +299,7 @@ def _build_transition_tool(
                 session,
                 workflow,
                 "The workflow is complete. Generate a concise, polite closing note with the agreed next step, play it once, and end the call without waiting for another reply.",
+                room,
             )
             return (
                 "End call state reached. The closing note is being played and the call is ending."
@@ -251,26 +313,47 @@ async def _start_terminal_response(
     session: AgentSession,
     workflow: WorkflowGraph,
     instructions: str,
+    room: object | None = None,
 ) -> None:
     if not workflow.begin_termination():
         return
     try:
-        speech = session.generate_reply(
-            instructions=instructions,
-            allow_interruptions=False,
-        )
-        speech = await _maybe_await(speech)
-    except (AttributeError, RuntimeError):
-        speech = await _speak(
-            session,
-            "Thank you for your time. We have captured the next step. Goodbye.",
-            allow_interruptions=False,
-        )
+        try:
+            speech = session.generate_reply(
+                instructions=instructions,
+                allow_interruptions=False,
+            )
+            speech = await _maybe_await(speech)
+        except (AttributeError, RuntimeError):
+            speech = await _speak(
+                session,
+                "Thank you for your time. We have captured the next step. Goodbye.",
+                allow_interruptions=False,
+            )
+    except Exception as exc:
+        get_logger(__name__).error("pipeline.workflow.closing_speech_failed", error=str(exc))
+        workflow.mark_ended()
+        await _publish_runtime_event(room, "workflow.ended", {"state_id": workflow.current.node_id})
+        await _shutdown_session_safely(session)
+        return
     termination_task = asyncio.create_task(
-        _schedule_shutdown_after_speech(session, workflow, speech)
+        _schedule_shutdown_after_speech(session, workflow, speech, room)
     )
     _TERMINATION_TASKS.add(termination_task)
-    termination_task.add_done_callback(_TERMINATION_TASKS.discard)
+    termination_task.add_done_callback(_handle_termination_task)
+
+
+def _handle_termination_task(task: asyncio.Task[None]) -> None:
+    _TERMINATION_TASKS.discard(task)
+    if task.cancelled():
+        return
+    try:
+        task.result()
+    except Exception as exc:
+        get_logger(__name__).error(
+            "pipeline.workflow.termination_failed",
+            error=str(exc),
+        )
 
 
 def _log_context(ctx: object) -> object:
@@ -315,18 +398,232 @@ def _merge_turn_handling(
         return dict(bundle_turn_handling)
 
     endpointing = dict(bundle_turn_handling.get("endpointing", {}))
-    endpointing["min_delay"] = turn_policy.min_endpointing_ms / 1000
-    endpointing["max_delay"] = turn_policy.max_endpointing_ms / 1000
+    endpointing_mode = getattr(turn_policy, "endpointing_mode", "dynamic")
+    endpointing["mode"] = endpointing_mode
+    if endpointing_mode == "fixed":
+        fixed_delay = getattr(turn_policy, "endpointing_ms", 400) / 1000
+        endpointing["min_delay"] = fixed_delay
+        endpointing["max_delay"] = fixed_delay
+    else:
+        endpointing["min_delay"] = getattr(turn_policy, "min_endpointing_ms", 250) / 1000
+        endpointing["max_delay"] = getattr(turn_policy, "max_endpointing_ms", 1_200) / 1000
+    endpointing["alpha"] = float(getattr(turn_policy, "endpointing_alpha", 0.8))
 
+    turn_detection = "stt" if getattr(turn_policy, "prefer_server_vad", True) else "vad"
     interruption = dict(bundle_turn_handling.get("interruption", {}))
     interruption["enabled"] = bool(turn_policy.allow_interruptions)
+    interruption["mode"] = getattr(turn_policy, "interruption_mode", "vad")
+    interruption["discard_audio_if_uninterruptible"] = bool(
+        getattr(turn_policy, "discard_audio_if_uninterruptible", True)
+    )
+    sensitivity = getattr(turn_policy, "interruption_sensitivity", "balanced")
+    sensitivity_min_duration = {"low": 0.5, "balanced": 0.35, "high": 0.2}.get(
+        sensitivity, 0.35
+    )
+    configured_min_duration_ms = getattr(turn_policy, "min_interruption_duration_ms", 350)
+    interruption["min_duration"] = (
+        sensitivity_min_duration
+        if configured_min_duration_ms == 350
+        else configured_min_duration_ms / 1000
+    )
+    sensitivity_min_words = {"low": 2, "balanced": 1, "high": 1}.get(sensitivity, 1)
+    configured_min_words = int(getattr(turn_policy, "min_interruption_words", 1))
+    interruption["min_words"] = (
+        sensitivity_min_words if configured_min_words == 1 else configured_min_words
+    )
     interruption["resume_false_interruption"] = bool(turn_policy.false_interruption_recovery)
+    interruption["false_interruption_timeout"] = (
+        getattr(turn_policy, "false_interruption_timeout_ms", 1200) / 1000
+    )
+    interruption["backchannel_boundary"] = (
+        getattr(turn_policy, "backchannel_boundary_ms", 800) / 1000
+    )
+
+    preemptive_generation = {
+        "enabled": bool(getattr(turn_policy, "preemptive_generation", True)),
+        "preemptive_tts": bool(getattr(turn_policy, "preemptive_tts", False)),
+        "max_speech_duration": (
+            getattr(turn_policy, "preemptive_max_speech_duration_ms", 10000) / 1000
+        ),
+        "max_retries": int(getattr(turn_policy, "preemptive_max_retries", 3)),
+    }
 
     return {
         **bundle_turn_handling,
+        "turn_detection": turn_detection,
         "endpointing": endpointing,
         "interruption": interruption,
+        "preemptive_generation": preemptive_generation,
     }
+
+
+def _streaming_runtime_payload(bundle: object) -> dict[str, object]:
+    """Describe the media path without exposing provider credentials."""
+    stt = getattr(bundle, "stt", None)
+    llm = getattr(bundle, "llm", None)
+    tts = getattr(bundle, "tts", None)
+    stt_capabilities = getattr(stt, "capabilities", None)
+    tts_capabilities = getattr(tts, "capabilities", None)
+    llm_options = getattr(llm, "_opts", None)
+    return {
+        "stt": {
+            "provider": type(stt).__name__,
+            "model": getattr(stt, "model", None),
+            "streaming": bool(getattr(stt_capabilities, "streaming", False)),
+            "transport": "websocket",
+        },
+        "llm": {
+            "provider": type(llm).__name__,
+            "model": getattr(llm, "model", None),
+            "streaming": bool(getattr(llm_options, "use_websocket", False)),
+            "transport": "websocket",
+        },
+        "tts": {
+            "provider": type(tts).__name__,
+            "model": getattr(tts, "model", None),
+            "streaming": bool(getattr(tts_capabilities, "streaming", False)),
+            "transport": "websocket",
+        },
+    }
+
+
+def _prewarm_streaming_providers(bundle: object) -> None:
+    """Start provider websocket prewarming without delaying room connection."""
+    tts = getattr(bundle, "tts", None)
+    tts_prewarm = getattr(tts, "prewarm", None)
+    if callable(tts_prewarm):
+        tts_prewarm()
+
+    # The Responses plugin currently exposes its pool internally, while Cartesia exposes
+    # prewarm(). Keep this guarded so an SDK upgrade cannot prevent a call from starting.
+    llm_pool = getattr(getattr(getattr(bundle, "llm", None), "_ws", None), "_pool", None)
+    llm_prewarm = getattr(llm_pool, "prewarm", None)
+    if callable(llm_prewarm):
+        llm_prewarm()
+
+
+def _schedule_runtime_event(
+    room: object | None,
+    pending_tasks: set[asyncio.Task[None]],
+    event_type: str,
+    payload: dict[str, object],
+) -> None:
+    if room is None:
+        return
+    publish_task = asyncio.create_task(_publish_runtime_event(room, event_type, payload))
+    pending_tasks.add(publish_task)
+    publish_task.add_done_callback(pending_tasks.discard)
+
+
+def _register_turn_event_logging(
+    session: AgentSession,
+    logger: Any,
+    scope: str,
+    room: object | None = None,
+) -> None:
+    pending_publish_tasks: set[asyncio.Task[None]] = set()
+    session._voice_runtime_event_tasks = pending_publish_tasks
+    latest_eou: tuple[float, str | None] | None = None
+
+    def publish_turn_event(event_type: str, payload: dict[str, object]) -> None:
+        _schedule_runtime_event(room, pending_publish_tasks, event_type, payload)
+
+    def log_state(event_name: str, event: object) -> None:
+        nonlocal latest_eou
+        payload = {
+            "old_state": getattr(event, "old_state", None),
+            "new_state": getattr(event, "new_state", None),
+        }
+        logger.info(f"{scope}.{event_name}", **payload)
+        publish_turn_event(f"turn.{event_name}", payload)
+        if (
+            event_name == "agent_state_changed"
+            and payload["new_state"] == "speaking"
+            and latest_eou is not None
+        ):
+            eou_timestamp, speech_id = latest_eou
+            latency_payload = {
+                "metric_type": "response_latency",
+                "speech_id": speech_id,
+                "latency_seconds": max(0.0, time.time() - eou_timestamp),
+                "budget_seconds": 2.0,
+            }
+            logger.info(f"{scope}.metrics", **latency_payload)
+            publish_turn_event("turn.metrics", latency_payload)
+            latest_eou = None
+
+    def log_overlap(event: object) -> None:
+        payload = {
+            "is_interruption": getattr(event, "is_interruption", None),
+            "agent_ended": getattr(event, "agent_ended", None),
+            "total_duration": getattr(event, "total_duration", None),
+            "prediction_duration": getattr(event, "prediction_duration", None),
+            "detection_delay": getattr(event, "detection_delay", None),
+        }
+        logger.info(
+            f"{scope}.overlapping_speech",
+            **payload,
+        )
+        publish_turn_event("turn.overlapping_speech", payload)
+
+    def log_false_interruption(event: object) -> None:
+        payload = {"resumed": getattr(event, "resumed", None)}
+        logger.info(
+            f"{scope}.false_interruption",
+            **payload,
+        )
+        publish_turn_event("turn.false_interruption", payload)
+
+    def log_metrics(event: object) -> None:
+        nonlocal latest_eou
+        metrics = getattr(event, "metrics", event)
+        payload: dict[str, object] = {
+            "metric_type": getattr(metrics, "type", type(metrics).__name__),
+        }
+        for field in (
+            "label",
+            "speech_id",
+            "end_of_utterance_delay",
+            "transcription_delay",
+            "on_user_turn_completed_delay",
+            "ttft",
+            "ttfb",
+            "duration",
+            "audio_duration",
+            "acquire_time",
+            "connection_reused",
+            "cancelled",
+            "completion_tokens",
+            "prompt_tokens",
+            "total_tokens",
+            "characters_count",
+            "streamed",
+            "prompt_cached_tokens",
+            "tokens_per_second",
+            "input_tokens",
+            "output_tokens",
+        ):
+            value = getattr(metrics, field, None)
+            if isinstance(value, (bool, int, float, str)):
+                payload[field] = value
+        logger.info(f"{scope}.metrics", **payload)
+        publish_turn_event("turn.metrics", payload)
+        if payload["metric_type"] == "eou_metrics":
+            timestamp = getattr(metrics, "timestamp", None)
+            if isinstance(timestamp, (int, float)):
+                latest_eou = (float(timestamp), payload.get("speech_id"))
+
+    session.on("user_state_changed", lambda event: log_state("user_state_changed", event))
+    session.on("agent_state_changed", lambda event: log_state("agent_state_changed", event))
+    session.on("overlapping_speech", log_overlap)
+    session.on("agent_false_interruption", log_false_interruption)
+    session.on("metrics_collected", log_metrics)
+
+
+async def _drain_runtime_event_tasks(session: AgentSession) -> None:
+    pending_tasks = getattr(session, "_voice_runtime_event_tasks", set())
+    while pending_tasks:
+        await asyncio.gather(*tuple(pending_tasks), return_exceptions=True)
 
 
 async def _run_worker_entrypoint(
@@ -359,83 +656,140 @@ async def _run_worker_entrypoint(
         return
 
     bundle = build_provider_bundle(resolved_request)
+    _prewarm_streaming_providers(bundle)
     turn_handling = _merge_turn_handling(bundle.turn_handling, plan)
-    if hasattr(ctx, "connect"):
-        await ctx.connect(
-            auto_subscribe=sdk["AutoSubscribe"].SUBSCRIBE_ALL,
-            single_peer_connection=True,
-        )
-        logger.info(
-            "pipeline.worker.connected",
-            room=getattr(getattr(ctx, "room", None), "name", None),
-            worker_id=getattr(ctx, "worker_id", None),
-        )
-
     session = AgentSession(
         stt=bundle.stt,
         llm=bundle.llm,
         tts=bundle.tts,
         vad=bundle.vad,
         turn_handling=turn_handling,
+        # One tool action may be followed by one normal response, but a turn
+        # must not fan out into an unbounded tool/generation chain.
+        max_tool_steps=1,
     )
+    if hasattr(ctx, "connect"):
+        try:
+            await ctx.connect(
+                auto_subscribe=sdk["AutoSubscribe"].SUBSCRIBE_ALL,
+                single_peer_connection=True,
+            )
+        except Exception:
+            await _shutdown_session_safely(session)
+            raise
+        logger.info(
+            "pipeline.worker.connected",
+            room=getattr(getattr(ctx, "room", None), "name", None),
+            worker_id=getattr(ctx, "worker_id", None),
+        )
 
     def on_remote_track_subscribed(
         track: object, publication: object, participant: object
     ) -> None:
-        logger.info(
-            "pipeline.worker.track.subscribed",
-            participant=getattr(participant, "identity", None),
-            source=getattr(publication, "source", None),
-            track_kind=getattr(track, "kind", None),
+        payload = {
+            "participant": getattr(participant, "identity", None),
+            "source": getattr(publication, "source", None),
+            "track_kind": getattr(track, "kind", None),
+        }
+        logger.info("pipeline.worker.track.subscribed", **payload)
+        _schedule_runtime_event(
+            ctx.room,
+            getattr(session, "_voice_runtime_event_tasks", set()),
+            "transport.track_subscribed",
+            payload,
         )
 
     def on_user_input_transcribed(event: object) -> None:
         transcript = str(getattr(event, "transcript", "") or "").strip()
         if transcript and bool(getattr(event, "is_final", False)):
-            logger.info("pipeline.worker.stt.final", transcript=transcript)
+            payload = {"characters": len(transcript)}
+            logger.info("pipeline.worker.stt.final", **payload)
+            _schedule_runtime_event(
+                ctx.room,
+                getattr(session, "_voice_runtime_event_tasks", set()),
+                "turn.stt_final",
+                payload,
+            )
 
-    ctx.room.on("track_subscribed", on_remote_track_subscribed)
-    session.on("user_input_transcribed", on_user_input_transcribed)
-    close_future = _session_close_future(session, ctx.room)
-    workflow = WorkflowGraph(resolved_request.workflow)
-    base_instructions = _build_agent_instructions(resolved_request)
-    agent_holder: dict[str, Agent | None] = {"agent": None}
-    agent = Agent(
-        instructions=f"{base_instructions}\n\n{workflow.current_instructions()}"
-        if workflow.has_nodes
-        else base_instructions,
-        allow_interruptions=plan.blueprint.turn_policy.allow_interruptions,
-        tools=[
-            _build_end_call_tool(session, workflow, ctx.room),
-            _build_transition_tool(
-                session, workflow, agent_holder, base_instructions, logger, ctx.room
+    try:
+        _register_turn_event_logging(session, logger, "pipeline.worker.turn", ctx.room)
+        streaming_payload = _streaming_runtime_payload(bundle)
+        logger.info("pipeline.worker.streaming.ready", layers=streaming_payload)
+        _schedule_runtime_event(
+            ctx.room,
+            getattr(session, "_voice_runtime_event_tasks", set()),
+            "transport.streaming_ready",
+            streaming_payload,
+        )
+        _schedule_runtime_event(
+            ctx.room,
+            getattr(session, "_voice_runtime_event_tasks", set()),
+            "transport.worker_connected",
+            {"room": getattr(getattr(ctx, "room", None), "name", None)},
+        )
+        ctx.room.on("track_subscribed", on_remote_track_subscribed)
+        session.on("user_input_transcribed", on_user_input_transcribed)
+        close_future = _session_close_future(session, ctx.room)
+        workflow = WorkflowGraph(resolved_request.workflow)
+        base_instructions = _build_agent_instructions(resolved_request)
+        agent_holder: dict[str, Agent | None] = {"agent": None}
+        agent = Agent(
+            instructions=f"{base_instructions}\n\n{workflow.current_instructions()}"
+            if workflow.has_nodes
+            else base_instructions,
+            allow_interruptions=plan.blueprint.turn_policy.allow_interruptions,
+            tools=[
+                _build_end_call_tool(session, workflow, ctx.room),
+                _build_transition_tool(
+                    session, workflow, agent_holder, base_instructions, logger, ctx.room
+                ),
+            ],
+        )
+        agent_holder["agent"] = agent
+        await asyncio.wait_for(
+            session.start(
+                agent=agent,
+                room=ctx.room,
+                room_options=bundle.room_options,
             ),
-        ],
-    )
-    agent_holder["agent"] = agent
-    await asyncio.wait_for(
-        session.start(
-            agent=agent,
-            room=ctx.room,
-            room_options=bundle.room_options,
-        ),
-        timeout=SESSION_START_TIMEOUT_SECONDS,
-    )
-    if resolved_request.prompt.opening_message:
-        await _speak(session, resolved_request.prompt.opening_message)
-    logger.info(
-        "pipeline.worker.session.started",
-        room=getattr(getattr(ctx, "room", None), "name", None),
-        session_id=resolved_request.session_id,
-        call_context=_log_context(ctx),
-    )
-    close_event = await close_future
-    logger.info(
-        "pipeline.worker.session.closed",
-        room=getattr(getattr(ctx, "room", None), "name", None),
-        session_id=resolved_request.session_id,
-        close_reason=close_event["reason"],
-    )
+            timeout=SESSION_START_TIMEOUT_SECONDS,
+        )
+        logger.info(
+            "pipeline.worker.session.started",
+            room=getattr(getattr(ctx, "room", None), "name", None),
+            session_id=resolved_request.session_id,
+            call_context=_log_context(ctx),
+        )
+        _schedule_runtime_event(
+            ctx.room,
+            getattr(session, "_voice_runtime_event_tasks", set()),
+            "transport.session_started",
+            {"session_id": resolved_request.session_id},
+        )
+        if resolved_request.prompt.opening_message:
+            logger.info(
+                "pipeline.worker.opening_speech.started",
+                characters=len(resolved_request.prompt.opening_message),
+            )
+            await _speak(session, resolved_request.prompt.opening_message)
+        close_event = await close_future
+        logger.info(
+            "pipeline.worker.session.closed",
+            room=getattr(getattr(ctx, "room", None), "name", None),
+            session_id=resolved_request.session_id,
+            close_reason=close_event["reason"],
+        )
+        _schedule_runtime_event(
+            ctx.room,
+            getattr(session, "_voice_runtime_event_tasks", set()),
+            "transport.session_closed",
+            {"reason": close_event["reason"]},
+        )
+    finally:
+        try:
+            await _drain_runtime_event_tasks(session)
+        finally:
+            await _shutdown_session_safely(session)
 
 
 async def worker_entrypoint(ctx: object) -> None:

@@ -98,6 +98,30 @@ class Settings(BaseSettings):
     database_url_prod: str | None = Field(
         default=None, validation_alias=AliasChoices("VOICE_DATABASE_URL_PROD")
     )
+    database_pool_size: int = Field(
+        default=5,
+        ge=1,
+        le=50,
+        validation_alias=AliasChoices("VOICE_DATABASE_POOL_SIZE"),
+    )
+    database_max_overflow: int = Field(
+        default=10,
+        ge=0,
+        le=100,
+        validation_alias=AliasChoices("VOICE_DATABASE_MAX_OVERFLOW"),
+    )
+    database_pool_timeout_seconds: int = Field(
+        default=10,
+        ge=1,
+        le=120,
+        validation_alias=AliasChoices("VOICE_DATABASE_POOL_TIMEOUT_SECONDS"),
+    )
+    database_pool_recycle_seconds: int = Field(
+        default=1800,
+        ge=60,
+        le=86_400,
+        validation_alias=AliasChoices("VOICE_DATABASE_POOL_RECYCLE_SECONDS"),
+    )
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -149,7 +173,7 @@ class Settings(BaseSettings):
         if resolved.environment != "prod":
             livekit_url = livekit_url or "ws://127.0.0.1:7880"
             livekit_api_key = livekit_api_key or "devkey"
-            livekit_api_secret = livekit_api_secret or "secret"
+            livekit_api_secret = livekit_api_secret or "voice-local-dev-livekit-secret-32"
 
         object.__setattr__(resolved, "livekit_url", livekit_url)
         object.__setattr__(resolved, "livekit_api_key", livekit_api_key)

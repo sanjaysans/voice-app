@@ -58,6 +58,7 @@ Local defaults after startup:
 - `VOICE_ENVIRONMENT=dev|test|prod` selects which database URL is active
 - `VOICE_DATABASE_URL` can override everything for one-off runs
 - `VOICE_DATABASE_URL_DEV`, `VOICE_DATABASE_URL_TEST`, and `VOICE_DATABASE_URL_PROD` hold your Supabase connection strings
+- `VOICE_DATABASE_POOL_SIZE`, `VOICE_DATABASE_MAX_OVERFLOW`, `VOICE_DATABASE_POOL_TIMEOUT_SECONDS`, and `VOICE_DATABASE_POOL_RECYCLE_SECONDS` tune backend connection reuse
 - `VOICE_SESSION_SECRET` signs backend session cookies and must be set explicitly in production
 - `VOICE_PIPELINE_BASE_URL` tells the backend where to build browser session manifests
 - `VOICE_LIVEKIT_URL`, `VOICE_LIVEKIT_API_KEY`, and `VOICE_LIVEKIT_API_SECRET` default to the local LiveKit dev server in non-production environments
@@ -66,6 +67,7 @@ Local defaults after startup:
 - `prod` still fails fast if its database URL is not configured
 - PostgreSQL connections automatically use the private `app_private` schema, so application tables stay out of Supabase's default `public` data API surface
 - Docker-backed local Postgres remains optional, but it is no longer the default path
+- `uv run --package voice-backend python backend/scripts/profile_supabase_latency.py` profiles connection and SQL round-trip latency without changing application rows
 
 ## Auth And Seed Bootstrap
 

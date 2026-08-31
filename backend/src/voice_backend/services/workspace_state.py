@@ -17,6 +17,7 @@ from voice_backend.schemas import (
     SessionMembershipRecord,
     WorkspaceAppState,
     WorkspaceRecord,
+    redact_secret_fields,
 )
 from voice_backend.secrets import build_provider_config_preview
 from voice_backend.services.agent_config import normalize_flow_edges, normalize_flow_nodes
@@ -69,7 +70,7 @@ def _build_agent_record(agent) -> AgentStudioRecord:
             "stack",
             {"stt": "Deepgram", "llm": "GPT-4.1", "tts": "ElevenLabs"},
         ),
-        runtime_profile=vendor_config.get("runtime_profile", {}),
+        runtime_profile=redact_secret_fields(vendor_config.get("runtime_profile", {})),
         variables=routing_config.get("variables", []),
         flow_nodes=flow_nodes,
         flow_edges=normalize_flow_edges(routing_config.get("flow_edges", []), flow_nodes),

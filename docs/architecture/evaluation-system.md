@@ -64,10 +64,11 @@ guardrail, and metric history. Evaluation calls are marked as test traffic and c
 7. Metric strategies score quality and retain judge metadata and explanations.
 8. The run stores pass/fail totals, score, and links to every call trace.
 
-For local development, the evaluator caller captures the subscribed LiveKit agent audio as a WAV
-artifact under `VOICE_RECORDINGS_DIR`. The authenticated call-recording endpoint serves that
-artifact to the evaluation run evidence viewer; older runs without an artifact show recording
-unavailable rather than synthetic audio.
+For local development, the evaluator caller captures both the local evaluator track and the
+subscribed LiveKit agent track, mixes them into one mono WAV artifact, and stores it under
+`VOICE_RECORDINGS_DIR`. The authenticated call-recording endpoint serves that artifact to the
+evaluation run evidence viewer; older runs without an artifact show recording unavailable rather
+than synthetic audio.
 
 Behavior failures are never retried. Only classified infrastructure failures may be retried, with
 bounded attempts and a visible reason. Until the jobs executor is connected, an evaluation run is

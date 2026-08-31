@@ -57,6 +57,7 @@ async def test_webrtc_session_endpoint_returns_dispatch_manifest() -> None:
     ) as client:
         response = await client.post(
             "/webrtc/session",
+            headers={"X-Voice-Internal-Key": "voice-local-internal-key"},
             json={
                 "room": {"room_name": "voice-browser-room"},
                 "prompt": {
@@ -74,3 +75,21 @@ async def test_webrtc_session_endpoint_returns_dispatch_manifest() -> None:
         assert payload["session"]["room_name"] == "voice-browser-room"
         assert payload["session"]["opening_message_configured"] is True
         assert "dispatch_metadata" in payload
+
+
+@pytest.mark.asyncio
+async def test_webrtc_session_endpoint_requires_internal_authentication() -> None:
+    async with AsyncClient(
+        transport=ASGITransport(app=create_app(Settings())),
+        base_url="http://testserver",
+    ) as client:
+        response = await client.post(
+            "/webrtc/session",
+            json={
+                "stt": {"api_key": "dg-key"},
+                "llm": {"api_key": "oa-key"},
+                "tts": {"api_key": "ca-key"},
+            },
+        )
+
+    assert response.status_code == 401

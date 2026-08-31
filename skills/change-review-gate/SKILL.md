@@ -22,6 +22,16 @@ This skill exists so the repo consistently treats review as part of delivery, no
 6. Re-run verification after fixes.
 7. Only then report completion.
 
+Run the review on two independent axes:
+
+- **Standards:** compare the change with `AGENTS.md`, the relevant `docs/architecture` guidance,
+  and the applicable layer skill. Use `codebase-design` terms when identifying shallow modules,
+  leaked seams, duplicated policy, or poor locality.
+- **Spec:** compare the behavior with the approved plan, PRD, issue, or user request. Report
+  missing requirements and scope creep separately from standards findings.
+
+Keep the two axes independent while reviewing, then consolidate duplicate findings before fixing.
+
 ## Review Expectations
 
 ### Senior SDE lens

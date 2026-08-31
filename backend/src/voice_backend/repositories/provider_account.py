@@ -1,4 +1,5 @@
 import uuid
+from collections.abc import Iterable
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -52,6 +53,28 @@ class ProviderAccountRepository:
             ProviderAccount.id == normalized_provider_account_id,
         )
         return self.session.scalar(statement)
+
+    def get_many_for_tenant(
+        self, tenant_id, provider_account_ids: Iterable[object]
+    ) -> dict[uuid.UUID, ProviderAccount]:
+        normalized_ids: set[uuid.UUID] = set()
+        for provider_account_id in provider_account_ids:
+            if isinstance(provider_account_id, uuid.UUID):
+                normalized_ids.add(provider_account_id)
+            elif isinstance(provider_account_id, str):
+                try:
+                    normalized_ids.add(uuid.UUID(provider_account_id))
+                except ValueError:
+                    continue
+        if not normalized_ids:
+            return {}
+
+        statement = select(ProviderAccount).where(
+            ProviderAccount.tenant_id == tenant_id,
+            ProviderAccount.id.in_(normalized_ids),
+        )
+        accounts = self.session.scalars(statement)
+        return {account.id: account for account in accounts}
 
     def update(
         self,

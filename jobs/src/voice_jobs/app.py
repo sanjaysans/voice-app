@@ -1,16 +1,14 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 
 from voice_jobs.config import Settings, get_settings
 from voice_jobs.logging import configure_logging, get_logger
 
-REGISTERED_WORKFLOWS = [
-    "post_call_processing",
-    "crm_sync",
-    "daily_analytics_rollup",
-    "eval_suite_execution",
-]
+# Do not report aspirational workflows as available before the Temporal worker
+# and its activities are wired and tested.
+REGISTERED_WORKFLOWS: list[str] = []
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -36,13 +34,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"status": "ok", "service": resolved_settings.service_name}
 
     @app.get("/ready")
-    async def ready() -> dict[str, object]:
-        return {
-            "status": "ok",
-            "service": resolved_settings.service_name,
-            "temporal_target": resolved_settings.temporal_target,
-            "temporal_namespace": resolved_settings.temporal_namespace,
-            "registered_workflows": REGISTERED_WORKFLOWS,
-        }
+    async def ready() -> JSONResponse:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "degraded",
+                "service": resolved_settings.service_name,
+                "temporal_target": resolved_settings.temporal_target,
+                "temporal_namespace": resolved_settings.temporal_namespace,
+                "registered_workflows": REGISTERED_WORKFLOWS,
+                "reason": "Temporal worker registration is not implemented yet.",
+            },
+        )
 
     return app

@@ -88,8 +88,8 @@ def test_variable_inputs_apply_defaults_and_render_prompt_tokens() -> None:
 
     assert values == {"farmer_name": "Ravi", "crate_count": 10}
     assert "Be concise to Ravi." in prompt
-    assert "Ask about 10 crates." in prompt
     assert "farmer_name (text, Farmer name): Ravi" in prompt
+    assert "active workflow state and its valid transitions" in prompt
 
 
 def test_render_workflow_resolves_state_and_transition_tokens() -> None:

@@ -150,7 +150,11 @@ export function ConfigFields({
               label={field.label}
               max={field.type === "number" ? field.max : undefined}
               min={field.type === "number" ? field.min : undefined}
-              placeholder={field.placeholder}
+              placeholder={
+                field.type === "password" && currentValue === undefined
+                  ? "Leave blank to keep the saved credential"
+                  : field.placeholder
+              }
               step={field.type === "number" ? field.step : undefined}
               type={field.type === "password" ? "password" : field.type === "number" ? "number" : "text"}
               value={typeof currentValue === "number" ? String(currentValue) : typeof currentValue === "string" ? currentValue : ""}

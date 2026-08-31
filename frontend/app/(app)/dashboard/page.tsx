@@ -4,8 +4,25 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Activity, ArrowRight, CalendarCheck2, PhoneCall, RadioTower, ShieldCheck } from "lucide-react";
 import { useMockApp } from "@/lib/mock-app";
-import { rangeMultipliers } from "@/lib/mock-data";
 import { Badge, Button, Card, EmptyState, PageHeader, StatCard } from "@/components/ui";
+
+const dateRanges = ["Today", "7D", "30D", "Quarter"] as const;
+
+function isCallInRange(createdAt: string | undefined, range: string) {
+  if (!createdAt) {
+    return true;
+  }
+
+  const createdDate = new Date(createdAt);
+  if (Number.isNaN(createdDate.getTime())) {
+    return true;
+  }
+
+  const days = range === "Today" ? 1 : range === "7D" ? 7 : range === "30D" ? 30 : 90;
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - days);
+  return createdDate >= cutoff;
+}
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -14,40 +31,40 @@ export default function DashboardPage() {
 
   const publishedAgents = agents.filter((agent) => agent.status === "Published").length;
   const connectedSystems = connections.filter((connection) => connection.status === "Connected").length;
-  const bookedCalls = callHistory.filter((call) => call.outcome === "Meeting booked").length;
-  const followUps = callHistory.filter((call) => call.outcome === "Follow-up").length;
-  const rangeMultiplier = rangeMultipliers[dateRange as keyof typeof rangeMultipliers] ?? 1;
-  const reviewedCalls = callHistory.length * rangeMultiplier;
-  const routedMeetings = bookedCalls * rangeMultiplier;
-  const followUpVolume = followUps * rangeMultiplier;
+  const visibleCalls = callHistory.filter(
+    (call) => call.isTest !== true && isCallInRange(call.createdAt, dateRange)
+  );
+  const completedCalls = visibleCalls.filter((call) => call.status === "Completed").length;
+  const followUpVolume = visibleCalls.filter((call) => call.status === "Follow-up").length;
+  const stackReady = connections.length > 0 && connectedSystems === connections.length;
 
   const stats = [
     {
       label: "Published agents",
       value: String(publishedAgents),
-      change: `${agents.length - publishedAgents} in draft`,
-      trend: "up" as const,
+      change: `${agents.length} total configured`,
+      trend: "neutral" as const,
       icon: RadioTower
     },
     {
       label: "Calls reviewed",
-      value: String(reviewedCalls),
-      change: `${routedMeetings} moved to a meeting`,
-      trend: "up" as const,
+      value: String(visibleCalls.length),
+      change: `${completedCalls} completed in range`,
+      trend: "neutral" as const,
       icon: PhoneCall
     },
     {
       label: "Connected systems",
       value: `${connectedSystems}/${connections.length}`,
-      change: "Core stack online",
-      trend: "up" as const,
+      change: stackReady ? "All configured layers healthy" : "Run checks for each layer",
+      trend: "neutral" as const,
       icon: ShieldCheck
     },
     {
       label: "Follow-ups queued",
       value: String(followUpVolume),
-      change: "Human handoff still visible",
-      trend: "up" as const,
+      change: `${visibleCalls.length} persisted calls in range`,
+      trend: "neutral" as const,
       icon: CalendarCheck2
     }
   ];
@@ -62,17 +79,21 @@ export default function DashboardPage() {
     },
     {
       title: "Verify launch dependencies",
-      detail: `${connectedSystems} integrations are connected for the active workflow.`,
+      detail: connections.length
+        ? `${connectedSystems} of ${connections.length} configured integrations passed their latest health check.`
+        : "No provider integrations are configured for this workspace yet.",
       href: "/connections",
       cta: "Review connections",
-      done: connectedSystems >= 3
+      done: stackReady
     },
     {
-      title: "Run the browser live test",
-      detail: "Use Live to validate the saved agent, runtime stack, transcript, and next-step review flow without telephony setup.",
-      href: "/live",
-      cta: "Open Live",
-      done: callHistory.some((call) => call.outcome === "Meeting booked")
+      title: "Review the first production call",
+      detail: visibleCalls.length
+        ? "Open Call logs to inspect transcripts, outcomes, and any pending CRM sync work."
+        : "No production call has been recorded in this range. Browser tests remain available from the Live console.",
+      href: "/calls/logs",
+      cta: "Open call logs",
+      done: visibleCalls.length > 0
     }
   ];
 
@@ -85,7 +106,7 @@ export default function DashboardPage() {
         actions={
           <>
             <div className="flex rounded-xl border border-border bg-white p-1">
-              {["Today", "7D", "30D", "Quarter"].map((range) => (
+              {dateRanges.map((range) => (
                 <button
                   key={range}
                   className={`rounded-lg px-3 py-2 text-sm transition ${
@@ -119,7 +140,9 @@ export default function DashboardPage() {
               <h2 className="text-lg font-semibold">Readiness checklist</h2>
               <p className="mt-1 text-sm text-[#6D6D78]">Keep the core workflow healthy from configuration through reviewed outcomes.</p>
             </div>
-            <Badge tone="success">Operational</Badge>
+            <Badge tone={stackReady ? "success" : "warning"}>
+              {stackReady ? "Ready to launch" : "Needs setup"}
+            </Badge>
           </div>
 
           <div className="mt-5 space-y-3">
@@ -149,7 +172,7 @@ export default function DashboardPage() {
               <div>
                 <p className="font-medium">Workflow posture</p>
                 <p className="mt-2 text-sm leading-6 text-[#5D52D6]">
-                  The current workflow is optimized for qualification and conversion, while the routing, connections, and review model remain reusable across future call programs.
+                  Metrics on this page are derived from persisted workspace records. Browser tests stay separate from production call totals so operators can trust the activity view.
                 </p>
               </div>
             </div>
@@ -162,14 +185,14 @@ export default function DashboardPage() {
               <h2 className="text-lg font-semibold">Recent call reviews</h2>
               <p className="mt-1 text-sm text-[#6D6D78]">Click any call to jump into the review surface.</p>
             </div>
-            <Link className="text-sm font-medium text-accent" href="/calls/logs" prefetch={false}>
+            <Link className="text-sm font-medium text-accent" href="/calls/logs">
               Open call logs
             </Link>
           </div>
 
           <div className="mt-5 space-y-3">
-            {callHistory.length ? (
-              callHistory.slice(0, 4).map((call) => (
+            {visibleCalls.length ? (
+              visibleCalls.slice(0, 4).map((call) => (
                 <button
                   key={call.id}
                   className="w-full rounded-2xl border border-border bg-white p-4 text-left transition hover:border-[rgba(102,89,255,0.24)] hover:bg-[#fcfcff]"
@@ -190,7 +213,9 @@ export default function DashboardPage() {
                     </div>
                     <Badge tone={call.statusTone}>{call.outcome}</Badge>
                   </div>
-                  <p className="mt-3 text-sm leading-6 text-[#4B4B59]">{call.summary}</p>
+                  {call.summary ? (
+                    <p className="mt-3 text-sm leading-6 text-[#4B4B59]">{call.summary}</p>
+                  ) : null}
                   <div className="mt-3 inline-flex items-center gap-2 text-sm font-medium text-accent">
                     Review call
                     <ArrowRight size={15} />
@@ -200,7 +225,7 @@ export default function DashboardPage() {
             ) : (
               <EmptyState
                 title="No reviewed calls yet"
-                description="Run the first call to populate review history, outcomes, and downstream sync signals here."
+                description={`No persisted production calls were recorded in ${dateRange}. Run a real call or change the date range to review activity here.`}
               />
             )}
           </div>

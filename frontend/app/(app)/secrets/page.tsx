@@ -26,6 +26,11 @@ export default function SecretsPage() {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
+    if (!tenantSlug) {
+      setAccounts([]);
+      setIsLoading(false);
+      return;
+    }
     void (async () => {
       setIsLoading(true);
       try {

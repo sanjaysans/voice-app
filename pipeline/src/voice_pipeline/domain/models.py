@@ -1,4 +1,5 @@
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -83,11 +84,42 @@ class ProviderSelection(BaseModel):
 class TurnPolicy(BaseModel):
     allow_interruptions: bool = True
     prefer_server_vad: bool = True
-    endpointing_ms: int = 700
-    min_endpointing_ms: int = 300
-    max_endpointing_ms: int = 1500
+    endpointing_ms: int = Field(default=600, ge=0, le=1200)
+    min_endpointing_ms: int = Field(default=600, ge=0, le=1200)
+    max_endpointing_ms: int = Field(default=600, ge=0, le=1200)
+    endpointing_mode: Literal["fixed", "dynamic"] = "fixed"
+    endpointing_alpha: float = Field(default=0.8, ge=0.0, le=1.0)
+    interruption_mode: Literal["adaptive", "vad"] = "vad"
+    min_interruption_duration_ms: int = Field(default=350, ge=0, le=5000)
+    min_interruption_words: int = Field(default=1, ge=0, le=10)
+    false_interruption_timeout_ms: int = Field(default=1200, ge=0, le=10000)
+    backchannel_boundary_ms: int = Field(default=500, ge=0, le=1200)
+    discard_audio_if_uninterruptible: bool = True
     false_interruption_recovery: bool = True
-    interruption_sensitivity: str = "balanced"
+    interruption_sensitivity: Literal["low", "balanced", "high"] = "balanced"
+    preemptive_generation: bool = False
+    preemptive_tts: bool = False
+    preemptive_max_speech_duration_ms: int = Field(default=10000, ge=0, le=60000)
+    preemptive_max_retries: int = Field(default=1, ge=0, le=10)
+
+    @model_validator(mode="after")
+    def validate_turn_ranges(self) -> "TurnPolicy":
+        if self.endpointing_mode == "fixed":
+            if self.min_endpointing_ms > self.endpointing_ms:
+                raise ValueError("min_endpointing_ms cannot exceed endpointing_ms")
+            if self.endpointing_ms > self.max_endpointing_ms:
+                raise ValueError("endpointing_ms cannot exceed max_endpointing_ms")
+        elif self.min_endpointing_ms > self.max_endpointing_ms:
+            raise ValueError("min_endpointing_ms cannot exceed max_endpointing_ms")
+        if self.endpointing_mode not in {"fixed", "dynamic"}:
+            raise ValueError("endpointing_mode must be fixed or dynamic")
+        if self.interruption_mode not in {"adaptive", "vad"}:
+            raise ValueError("interruption_mode must be adaptive or vad")
+        if self.interruption_sensitivity not in {"low", "balanced", "high"}:
+            raise ValueError("interruption_sensitivity must be low, balanced, or high")
+        if self.backchannel_boundary_ms > self.max_endpointing_ms:
+            raise ValueError("backchannel_boundary_ms cannot exceed max_endpointing_ms")
+        return self
 
 
 class HandoffPolicy(BaseModel):

@@ -17,7 +17,8 @@ async def test_ready_endpoint_reports_temporal_connection_settings() -> None:
     ) as client:
         response = await client.get("/ready")
 
-        assert response.status_code == 200
+        assert response.status_code == 503
+        assert response.json()["status"] == "degraded"
         assert response.json()["temporal_target"] == "temporal.local:7233"
         assert response.json()["temporal_namespace"] == "voice-dev"
 
@@ -30,5 +31,5 @@ async def test_ready_endpoint_lists_registered_workflows() -> None:
     ) as client:
         response = await client.get("/ready")
 
-        assert response.status_code == 200
+        assert response.status_code == 503
         assert response.json()["registered_workflows"] == REGISTERED_WORKFLOWS

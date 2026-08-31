@@ -74,7 +74,7 @@ class TeamAdminService:
         user = self.users.get_by_email(payload.email)
         if user is None:
             user = self.users.create(payload.email, payload.display_name)
-        else:
+        elif not any(item.tenant_id != tenant.id for item in user.memberships):
             self.users.update(user, display_name=payload.display_name)
         membership = self.memberships.create(tenant.id, workspace.id, user.id, payload.role)
         membership = self.memberships.get_for_workspace(tenant.id, workspace.id, membership.id)
@@ -98,7 +98,8 @@ class TeamAdminService:
         if membership is None:
             return None
         self.memberships.update(membership, role=payload.role)
-        self.users.update(membership.user, display_name=payload.display_name)
+        if not any(item.tenant_id != tenant.id for item in membership.user.memberships):
+            self.users.update(membership.user, display_name=payload.display_name)
         membership = self.memberships.get_for_workspace(tenant.id, workspace.id, membership.id)
         clear_read_cache()
         return _to_record(membership)

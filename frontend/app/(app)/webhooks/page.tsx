@@ -49,6 +49,11 @@ export default function WebhooksPage() {
   }
 
   useEffect(() => {
+    if (!tenantSlug) {
+      setHooks([]);
+      setIsLoading(false);
+      return;
+    }
     void loadHooks({ showLoader: true });
   }, [tenantSlug]);
 
@@ -69,17 +74,10 @@ export default function WebhooksPage() {
         provider_kind: "webhook",
         vendor_name: "Webhook",
         label,
-        status: "active",
+        status: "draft",
         config: {
           url,
           events: events.split(",").map((item) => item.trim()).filter(Boolean),
-          ui_status: "Connected",
-          detail: "Recent deliveries are simulated in the prototype.",
-          signing_secret_preview: "whsec_••••••••",
-          deliveries: [
-            { id: "delivery_1", event: "call.completed", status: "Delivered" },
-            { id: "delivery_2", event: "call.follow_up", status: "Retrying" },
-          ],
         },
       }),
     });
@@ -134,6 +132,11 @@ export default function WebhooksPage() {
         }
       />
 
+      <div className="flex items-start gap-3 rounded-2xl border border-warning/20 bg-warning/10 px-4 py-3 text-sm text-[#7A4B00]">
+        <Badge tone="warning">Delivery worker pending</Badge>
+        <p>Endpoints are stored for configuration, but outbound delivery is not connected until the delivery worker is enabled.</p>
+      </div>
+
       {isLoading ? (
         <ContentLoader
           title="Loading webhooks"
@@ -166,9 +169,9 @@ export default function WebhooksPage() {
                     </p>
                   </div>
                   <div className="rounded-xl border border-border bg-white p-3">
-                    <p className="text-xs uppercase tracking-[0.16em] text-[#6D6D78]">Signing secret</p>
+                    <p className="text-xs uppercase tracking-[0.16em] text-[#6D6D78]">Delivery status</p>
                     <p className="mt-2 text-sm font-medium">
-                      {String(hook.preview.signing_secret_preview ?? "Not generated")}
+                      Not available yet
                     </p>
                   </div>
                 </div>
@@ -207,7 +210,7 @@ export default function WebhooksPage() {
         ) : (
           <EmptyState
             title="No webhooks configured yet"
-            description="Add the first endpoint to simulate delivery logs, signing secrets, and downstream event subscriptions."
+            description="Add an endpoint when the delivery worker is enabled. Until then, this page only stores the endpoint configuration."
           />
         )}
       </Card>
@@ -246,7 +249,7 @@ export default function WebhooksPage() {
 
       <Modal
         title="Edit webhook"
-        description="Update the endpoint and event list while preserving the existing simulated delivery history."
+        description="Update the endpoint and event subscriptions without exposing stored credentials."
         isOpen={Boolean(editingHook)}
         onClose={() => {
           if (editAction.isPending) {
@@ -274,7 +277,7 @@ export default function WebhooksPage() {
         title="Delete webhook"
         description={
           hookToDelete
-            ? `Delete ${hookToDelete.label}? Simulated delivery history for this endpoint will be removed from the prototype.`
+            ? `Delete ${hookToDelete.label}? This removes the stored endpoint configuration.`
             : "Delete this webhook? This action cannot be undone."
         }
         confirmLabel="Delete webhook"

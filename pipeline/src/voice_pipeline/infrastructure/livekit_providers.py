@@ -48,6 +48,8 @@ def build_provider_bundle(session_request: ClientSessionRequest) -> LiveKitProvi
             sttv2_kwargs["eot_threshold"] = session_request.stt.eot_threshold
         elif session_request.stt.eager_eot_threshold is not None:
             sttv2_kwargs["eot_threshold"] = max(session_request.stt.eager_eot_threshold, 0.5)
+        if session_request.stt.eot_timeout_ms is not None:
+            sttv2_kwargs["eot_timeout_ms"] = session_request.stt.eot_timeout_ms
         if session_request.stt.keyterms:
             sttv2_kwargs["keyterm"] = session_request.stt.keyterms
         stt = deepgram.STTv2(**sttv2_kwargs)
@@ -81,8 +83,10 @@ def build_provider_bundle(session_request: ClientSessionRequest) -> LiveKitProvi
         model=session_request.llm.model,
         api_key=session_request.llm.api_key.get_secret_value(),
         base_url=session_request.llm.base_url,
+        use_websocket=True,
         temperature=session_request.llm.temperature,
         max_output_tokens=session_request.llm.max_output_tokens,
+        service_tier=session_request.llm.service_tier,
         user=session_request.llm.user,
         metadata={
             "session_id": session_request.session_id,
@@ -98,6 +102,8 @@ def build_provider_bundle(session_request: ClientSessionRequest) -> LiveKitProvi
         emotion=session_request.tts.emotion,
         volume=session_request.tts.volume,
         sample_rate=session_request.tts.sample_rate,
+        # Keep Cartesia consuming streamed LLM text immediately; sentence pacing adds buffering.
+        text_pacing=False,
     )
     audio_input = (
         room_io.AudioInputOptions(

@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 
 import httpx
+from cryptography.fernet import InvalidToken
 from sqlalchemy.orm import Session
 
 from voice_backend.logging import get_logger
@@ -14,6 +15,7 @@ from voice_backend.secrets import (
     build_provider_config_preview,
     decrypt_provider_config,
     encrypt_provider_config,
+    is_secret_config_key,
 )
 from voice_backend.services.read_cache import clear_read_cache, get_read_cache, set_read_cache
 
@@ -170,7 +172,14 @@ def _health_check_payload(account) -> tuple[str, dict[str, object]]:
             "last_checked": _format_check_time(),
         }
 
-    probe = _build_probe_request(account, rule)
+    try:
+        probe = _build_probe_request(account, rule)
+    except (InvalidToken, TypeError, ValueError, UnicodeDecodeError):
+        return "error", {
+            "ui_status": "Warning",
+            "detail": f"{account.label} has an unreadable stored credential. Replace the credential and retry.",
+            "last_checked": _format_check_time(),
+        }
     try:
         with httpx.Client(timeout=10) as client:
             response = client.get(
@@ -203,6 +212,13 @@ def _health_check_payload(account) -> tuple[str, dict[str, object]]:
 
 def _to_record(account) -> ProviderAccountRecord:
     config = account.config or {}
+    try:
+        preview = build_provider_config_preview(config)
+    except (InvalidToken, TypeError, ValueError, UnicodeDecodeError):
+        preview = {
+            "ui_status": "Warning",
+            "detail": "Stored credential could not be decrypted. Replace it before launching.",
+        }
     return ProviderAccountRecord(
         provider_account_id=account.id,
         tenant_id=account.tenant_id,
@@ -214,7 +230,7 @@ def _to_record(account) -> ProviderAccountRecord:
         config_keys=sorted(config.keys()),
         preview={
             key: value
-            for key, value in build_provider_config_preview(config).items()
+            for key, value in preview.items()
             if key in SAFE_PREVIEW_KEYS
         },
         created_at=account.created_at,
@@ -296,15 +312,25 @@ class ProviderAccountAdminService:
         account = self.accounts.get_for_tenant(tenant.id, provider_account_id)
         if account is None:
             return None
+        config = None
+        if payload.config is not None:
+            existing_config = decrypt_provider_config(account.config or {})
+            merged_config = dict(existing_config)
+            for key, value in payload.config.items():
+                if is_secret_config_key(key) and (
+                    value is None or not str(value).strip()
+                ):
+                    continue
+                merged_config[key] = value
+            config = encrypt_provider_config(merged_config)
+
         updated = self.accounts.update(
             account,
             provider_kind=payload.provider_kind,
             vendor_name=payload.vendor_name,
             label=payload.label,
             status=payload.status,
-            config=encrypt_provider_config(payload.config or {})
-            if payload.config is not None
-            else None,
+            config=config,
         )
         clear_read_cache()
         logger.info(

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import ssl
 from contextlib import asynccontextmanager
 from datetime import timedelta
+from time import perf_counter
 from uuid import UUID, uuid4
 
 import aiohttp
@@ -10,11 +12,13 @@ import certifi
 import httpx
 from livekit.api import AccessToken, LiveKitAPI, VideoGrants
 from livekit.protocol.agent_dispatch import CreateAgentDispatchRequest
-from livekit.protocol.room import CreateRoomRequest, DeleteRoomRequest
+from livekit.protocol.room import DeleteRoomRequest
 
 from voice_backend.config import Settings
+from voice_backend.logging import get_logger
 from voice_backend.schemas import BrowserRtcSessionRecord, BrowserRtcSessionResolvedInput
-from voice_backend.secrets import encrypt_runtime_metadata
+
+logger = get_logger(__name__)
 
 
 class RealtimeSessionError(RuntimeError):
@@ -45,21 +49,39 @@ class RealtimeSessionService:
             payload.dispatch_agent_name or self._settings.livekit_agent_name
         )
 
+        started_at = perf_counter()
         manifest = await self._build_pipeline_manifest(pipeline_payload)
         if manifest["errors"]:
             raise RealtimeSessionError("pipeline session validation failed")
+        logger.info(
+            "realtime.session.step",
+            step="manifest_ready",
+            duration_ms=round((perf_counter() - started_at) * 1000, 2),
+        )
 
         room_name = str(manifest["session"]["room_name"])
+        dispatch_started_at = perf_counter()
         dispatch = await self._create_room_dispatch(
             room_name=room_name,
             agent_name=str(manifest["dispatch_agent_name"]),
-            metadata=encrypt_runtime_metadata(str(manifest["dispatch_metadata"]), self._settings),
+            metadata=str(manifest["dispatch_metadata"]),
+        )
+        logger.info(
+            "realtime.session.step",
+            step="room_and_dispatch_ready",
+            duration_ms=round((perf_counter() - dispatch_started_at) * 1000, 2),
         )
         try:
+            token_started_at = perf_counter()
             access_token = self._create_access_token(
                 room_name=room_name,
                 participant_identity=participant_identity,
                 participant_name=participant_name,
+            )
+            logger.info(
+                "realtime.session.step",
+                step="browser_token_ready",
+                duration_ms=round((perf_counter() - token_started_at) * 1000, 2),
             )
         except Exception as exc:
             await self.cleanup_browser_session(room_name=room_name, dispatch_id=dispatch.id)
@@ -84,14 +106,29 @@ class RealtimeSessionService:
             return
         async with self._livekit_api() as livekit_api:
             if dispatch_id:
-                try:
-                    await livekit_api.agent_dispatch.delete_dispatch(dispatch_id, room_name)
-                except Exception:
-                    pass
+                await self._cleanup_resource(
+                    "dispatch",
+                    lambda: livekit_api.agent_dispatch.delete_dispatch(dispatch_id, room_name),
+                )
+            await self._cleanup_resource(
+                "room",
+                lambda: livekit_api.room.delete_room(DeleteRoomRequest(room=room_name)),
+            )
+
+    async def _cleanup_resource(self, resource: str, operation) -> None:
+        for attempt in range(2):
             try:
-                await livekit_api.room.delete_room(DeleteRoomRequest(room=room_name))
-            except Exception:
-                pass
+                await operation()
+                return
+            except Exception as exc:
+                if attempt == 1:
+                    logger.warning(
+                        "realtime.cleanup.failed",
+                        resource=resource,
+                        error=exc.__class__.__name__,
+                    )
+                else:
+                    await asyncio.sleep(0.2)
 
     async def create_server_session(
         self,
@@ -114,7 +151,7 @@ class RealtimeSessionService:
         dispatch = await self._create_room_dispatch(
             room_name=room_name,
             agent_name=str(manifest["dispatch_agent_name"]),
-            metadata=encrypt_runtime_metadata(str(manifest["dispatch_metadata"]), self._settings),
+            metadata=str(manifest["dispatch_metadata"]),
         )
         return manifest, str(dispatch.id)
 
@@ -136,12 +173,23 @@ class RealtimeSessionService:
 
     async def _build_pipeline_manifest(self, payload: dict[str, object]) -> dict[str, object]:
         endpoint = self._settings.pipeline_base_url.rstrip("/") + "/webrtc/session"
+        started_at = perf_counter()
         async with httpx.AsyncClient(timeout=15) as client:
-            response = await client.post(endpoint, json=payload)
+            response = await client.post(
+                endpoint,
+                json=payload,
+                headers={"X-Voice-Internal-Key": self._settings.internal_api_key},
+            )
         if response.status_code >= 400:
             raise RealtimeSessionError(
                 f"pipeline session build failed with status {response.status_code}"
             )
+        logger.info(
+            "realtime.session.step",
+            step="pipeline_manifest_request",
+            duration_ms=round((perf_counter() - started_at) * 1000, 2),
+            status_code=response.status_code,
+        )
         manifest = response.json()
         required_keys = {"session", "dispatch_agent_name", "dispatch_metadata", "runtime"}
         if not required_keys.issubset(manifest):
@@ -158,26 +206,22 @@ class RealtimeSessionService:
         metadata: str,
     ):
         async with self._livekit_api() as livekit_api:
-            await livekit_api.room.create_room(
-                CreateRoomRequest(
-                    name=room_name,
-                    empty_timeout=self._settings.livekit_room_empty_timeout_seconds,
-                    max_participants=8,
-                )
-            )
             try:
-                return await livekit_api.agent_dispatch.create_dispatch(
+                dispatch_started_at = perf_counter()
+                dispatch = await livekit_api.agent_dispatch.create_dispatch(
                     CreateAgentDispatchRequest(
                         room=room_name,
                         agent_name=agent_name,
                         metadata=metadata,
                     )
                 )
+                logger.info(
+                    "realtime.session.step",
+                    step="livekit_dispatch_created",
+                    duration_ms=round((perf_counter() - dispatch_started_at) * 1000, 2),
+                )
+                return dispatch
             except Exception as exc:
-                try:
-                    await livekit_api.room.delete_room(DeleteRoomRequest(room=room_name))
-                except Exception:
-                    pass
                 raise RealtimeSessionError("live session dispatch creation failed") from exc
 
     @asynccontextmanager
@@ -219,7 +263,7 @@ class RealtimeSessionService:
                     room=room_name,
                     can_publish=True,
                     can_subscribe=True,
-                    can_publish_data=True,
+                    can_publish_data=False,
                 )
             )
             .to_jwt()

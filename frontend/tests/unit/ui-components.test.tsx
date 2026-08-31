@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { Button, ConfirmActionModal, Select } from "@/components/ui";
+import { Button, ConfirmActionModal, Select, Tabs } from "@/components/ui";
 
 describe("shared ui components", () => {
   it("opens the custom dropdown and returns the selected value", async () => {
@@ -42,6 +42,34 @@ describe("shared ui components", () => {
     await user.click(button);
 
     expect(handleClick).not.toHaveBeenCalled();
+  });
+
+  it("supports accessible tab selection and keyboard navigation", async () => {
+    const user = userEvent.setup();
+    const handleChange = vi.fn();
+
+    render(
+      <Tabs
+        ariaLabel="Settings sections"
+        items={[
+          { id: "general", label: "General", description: "Workspace basics" },
+          { id: "access", label: "Access", description: "Permissions" },
+        ]}
+        onChange={handleChange}
+        value="general"
+      />
+    );
+
+    const generalTab = screen.getByRole("tab", { name: "General" });
+    const accessTab = screen.getByRole("tab", { name: "Access" });
+    expect(generalTab).toHaveAttribute("aria-selected", "true");
+    expect(accessTab).toHaveAttribute("aria-selected", "false");
+
+    await user.click(generalTab);
+    await user.keyboard("{ArrowRight}");
+
+    expect(handleChange).toHaveBeenLastCalledWith("access");
+    expect(accessTab).toHaveFocus();
   });
 
   it("requires explicit confirmation before destructive actions continue", async () => {

@@ -1,9 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { ArrowLeft, CheckCircle2, Clock3, FileAudio, Play, Plus, RefreshCw, Trash2, XCircle } from "lucide-react";
-import { Badge, Button, Card, ConfirmActionModal, ContentLoader, EmptyState, Input, Modal, SurfaceLoader } from "@/components/ui";
+import { Badge, Button, Card, ConfirmActionModal, ContentLoader, EmptyState, Input, Modal, SurfaceLoader, Tabs } from "@/components/ui";
 import { api, apiBlob } from "@/lib/api-client";
 import { useMockApp } from "@/lib/mock-app";
 import { useAsyncAction, useKeyedAsyncAction } from "@/lib/use-async-action";
@@ -96,6 +95,7 @@ export function EvaluationSuiteScreen({ suiteId }: { suiteId: string }) {
   const [error, setError] = useState("");
   const caseAction = useAsyncAction();
   const runAction = useAsyncAction();
+  const refreshAction = useAsyncAction();
   const deleteCaseAction = useKeyedAsyncAction();
 
   const suitePath = `/api/v1/tenants/${tenantSlug}/workspaces/${workspaceId}/evaluations/${suiteId}`;
@@ -204,6 +204,10 @@ export function EvaluationSuiteScreen({ suiteId }: { suiteId: string }) {
     }
   }
 
+  async function refreshSuite() {
+    await refreshAction.run(() => Promise.all([loadSuite(), loadRuns()]).then(() => undefined));
+  }
+
   async function waitForRun(runId: string) {
     for (let attempt = 0; attempt < 120; attempt += 1) {
       await new Promise((resolve) => window.setTimeout(resolve, 2000));
@@ -242,18 +246,23 @@ export function EvaluationSuiteScreen({ suiteId }: { suiteId: string }) {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <Button asChild href="/evaluations" variant="ghost" size="sm"><ArrowLeft size={16} /> All suites</Button>
-        <div className="flex items-center gap-3"><Button variant="secondary" loading={isLoading || isHistoryLoading} onClick={() => void Promise.all([loadSuite(), loadRuns()])}><RefreshCw size={16} /> Refresh</Button><Button loading={runAction.isPending} loadingText="Running" onClick={() => void runSuite()} disabled={!suite.cases.length}><Play size={16} /> Run suite</Button></div>
+        <div className="flex items-center gap-3"><Button variant="secondary" loading={refreshAction.isPending || isLoading || isHistoryLoading} loadingText="Refreshing" onClick={() => void refreshSuite()}><RefreshCw size={16} /> Refresh</Button><Button loading={runAction.isPending} loadingText="Running" onClick={() => void runSuite()} disabled={!suite.cases.length}><Play size={16} /> Run suite</Button></div>
       </div>
 
       {error ? <Card className="border-[rgba(220,38,38,0.22)] bg-[rgba(220,38,38,0.04)]"><p className="text-sm text-danger">{error}</p></Card> : null}
 
-      <Card className="p-0">
+      <Card className="min-w-0 overflow-hidden p-0">
         <div className="flex flex-wrap items-start justify-between gap-5 border-b border-border p-6">
           <div><p className="text-xs font-semibold uppercase tracking-[0.2em] text-accent">Evaluation suite</p><h1 className="mt-2 text-2xl font-semibold text-[#17171F]">{suite.name}</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-[#6D6D78]">{suite.description || "Validate this agent with repeatable scenarios before production traffic."}</p></div>
           <Badge tone={suite.status === "active" ? "success" : "warning"}>{suite.status}</Badge>
         </div>
         <div className="grid gap-3 border-b border-border bg-[#fcfcff] p-4 sm:grid-cols-3"><div className="rounded-2xl border border-border bg-white p-4"><p className="text-xs uppercase tracking-[0.14em] text-[#8A8A98]">Agent</p><p className="mt-2 text-sm font-medium">{agentName}</p></div><div className="rounded-2xl border border-border bg-white p-4"><p className="text-xs uppercase tracking-[0.14em] text-[#8A8A98]">Frozen version</p><p className="mt-2 text-sm font-medium">v{suite.latest_version_number}</p></div><div className="rounded-2xl border border-border bg-white p-4"><p className="text-xs uppercase tracking-[0.14em] text-[#8A8A98]">Latest score</p><p className="mt-2 text-sm font-medium">{scoreLabel(suite.last_run_score)}</p></div></div>
-        <div className="flex flex-wrap gap-2 p-3" role="tablist" aria-label="Evaluation suite sections">{tabs.map((tab) => <button key={tab.id} type="button" role="tab" aria-selected={activeTab === tab.id} onClick={() => setActiveTab(tab.id)} className={`rounded-xl px-4 py-3 text-left transition ${activeTab === tab.id ? "bg-[rgba(102,89,255,0.1)] text-accent" : "text-[#6D6D78] hover:bg-[#f7f7f9]"}`}><span className="block text-sm font-semibold">{tab.label}</span><span className="mt-1 block text-xs">{tab.description}</span></button>)}</div>
+        <Tabs
+          ariaLabel="Evaluation suite sections"
+          items={tabs}
+          onChange={(tab) => setActiveTab(tab as SuiteTab)}
+          value={activeTab}
+        />
       </Card>
 
       {activeTab === "overview" ? <OverviewTab suite={suite} runs={runs} onOpenHistory={() => setActiveTab("history")} /> : null}

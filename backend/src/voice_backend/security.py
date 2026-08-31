@@ -33,10 +33,17 @@ def verify_password(password: str, stored_hash: str) -> bool:
     if algorithm != "pbkdf2_sha256":
         return False
 
-    iterations = int(iteration_text)
-    salt = _urlsafe_decode(salt_text)
-    expected = _urlsafe_decode(hash_text)
-    actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+    try:
+        iterations = int(iteration_text)
+        if iterations < 1:
+            return False
+        salt = _urlsafe_decode(salt_text)
+        expected = _urlsafe_decode(hash_text)
+        if not salt or not expected:
+            return False
+        actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+    except (TypeError, ValueError, base64.binascii.Error):
+        return False
     return hmac.compare_digest(actual, expected)
 
 

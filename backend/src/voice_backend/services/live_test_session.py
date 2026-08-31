@@ -3,9 +3,12 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from time import perf_counter
+from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from voice_backend.logging import get_logger
 from voice_backend.repositories import (
     AgentRepository,
     CallRepository,
@@ -28,6 +31,8 @@ from voice_backend.schemas import (
 from voice_backend.secrets import decrypt_provider_config
 from voice_backend.services.agent_config import normalize_flow_edges, normalize_flow_nodes
 
+logger = get_logger(__name__)
+
 
 def _status_label_from_lifecycle(lifecycle_status: str) -> str:
     return "Dropped" if lifecycle_status in {"failed", "cancelled"} else "Completed"
@@ -43,6 +48,17 @@ def _normalize_string(value: object, fallback: str = "") -> str:
     if isinstance(value, str):
         return value.strip() or fallback
     return fallback
+
+
+def _coerce_uuid(value: object) -> UUID | None:
+    if isinstance(value, UUID):
+        return value
+    if not value:
+        return None
+    try:
+        return UUID(str(value))
+    except (TypeError, ValueError):
+        return None
 
 
 def _parse_csv_values(value: object) -> list[str]:
@@ -89,6 +105,27 @@ def _coerce_float(value: object, fallback: float) -> float:
         return float(value)
     except (TypeError, ValueError):
         return fallback
+
+
+def _coerce_bounded_float(
+    value: object,
+    fallback: float,
+    *,
+    min_value: float,
+    max_value: float,
+) -> float:
+    resolved = _coerce_float(value, fallback)
+    if resolved < min_value or resolved > max_value:
+        return fallback
+    return resolved
+
+
+def _resolve_browser_stt_model(value: object) -> str:
+    """Keep browser calls on Deepgram's low-latency turn-aware stream."""
+    model = _normalize_string(value, "flux-general-en").lower()
+    if model.startswith("nova"):
+        return "flux-general-en"
+    return model
 
 
 _VARIABLE_TOKEN_PATTERN = re.compile(r"\{\{\s*([a-z][a-z0-9_]*)\s*\}\}")
@@ -202,52 +239,6 @@ def _build_workflow_prompt(
         AgentVariableDefinition.model_validate(raw_definition) for raw_definition in raw_definitions
     ]
     _validate_prompt_variables(shared_prompt, definitions)
-    node_labels = {
-        str(node.get("id")): _normalize_string(node.get("label"))
-        for node in flow_nodes or []
-        if isinstance(node, dict)
-    }
-    state_instructions = []
-    for node in flow_nodes or []:
-        if not isinstance(node, dict):
-            continue
-        transitions = []
-        for edge in flow_edges or []:
-            if not isinstance(edge, dict) or str(edge.get("source_id", "")) != str(
-                node.get("id", "")
-            ):
-                continue
-            transitions.append(
-                f"{_normalize_string(edge.get('label'), 'Transition')} -> "
-                f"{node_labels.get(str(edge.get('target_id')), _normalize_string(edge.get('target_id')))}: "
-                f"{_render_prompt(_normalize_string(edge.get('condition'), 'Use the configured next state when appropriate.'), variables)}"
-            )
-        _validate_prompt_variables(_normalize_string(node.get("state")), definitions)
-        _validate_prompt_variables(_normalize_string(node.get("prompt")), definitions)
-        for edge in flow_edges or []:
-            if isinstance(edge, dict) and str(edge.get("source_id", "")) == str(node.get("id", "")):
-                _validate_prompt_variables(_normalize_string(edge.get("condition")), definitions)
-        instructions = [
-            f"State: {_normalize_string(node.get('label'))}",
-            f"Objective: {_render_prompt(_normalize_string(node.get('state')), variables)}",
-            f"Prompt: {_render_prompt(_normalize_string(node.get('prompt')), variables)}",
-        ]
-        if node.get("node_type") == "end_call":
-            instructions.append(
-                "Terminal state: call the end_call runtime action with a concise closing note, play it once, and terminate the call without waiting for another user turn."
-            )
-        instructions.extend(
-            [
-                "Transitions:",
-                *(
-                    [f"- {line}" for line in transitions]
-                    if transitions
-                    else ["- End or hold the conversation when no transition applies."]
-                ),
-            ]
-        )
-        state_instructions.append("\n".join(instructions))
-    workflow_states = "\n\n".join(state_instructions)
     variable_lines = []
     for definition in definitions:
         value = variables.get(definition.key, "not provided")
@@ -261,7 +252,12 @@ def _build_workflow_prompt(
             _render_prompt(shared_prompt, variables),
             f"Workflow purpose: {description}" if description else "",
             f"Call variables:\n{chr(10).join(variable_lines)}" if variable_lines else "",
-            f"Workflow states:\n{workflow_states}" if workflow_states else "",
+            (
+                "The runtime supplies the active workflow state and its valid transitions. "
+                "Follow those instructions exactly and never invent a state."
+                if flow_nodes
+                else ""
+            ),
         ]
         if part
     )
@@ -269,6 +265,9 @@ def _build_workflow_prompt(
 
 @dataclass(frozen=True)
 class PreparedBrowserRtcSession:
+    tenant_id: UUID
+    workspace_id: UUID
+    agent_version_id: UUID
     agent_name: str
     launch_number: str
     vendor_trace: str
@@ -318,17 +317,14 @@ class LiveTestSessionService:
         workspace_id,
         payload: BrowserRtcSessionCreateInput,
     ) -> PreparedBrowserRtcSession | None:
-        tenant = self.tenants.get_by_slug(tenant_slug)
-        if tenant is None:
+        started_at = perf_counter()
+        dependencies = self.agents.get_browser_session_dependencies(
+            tenant_slug, workspace_id, payload.agent_id
+        )
+        if dependencies is None:
             return None
-        workspace = self.workspaces.get_for_tenant(tenant.id, workspace_id)
-        if workspace is None:
-            return None
-        agent = self.agents.get_definition_for_workspace(tenant.id, workspace.id, payload.agent_id)
-        if agent is None or not agent.versions:
-            return None
+        tenant, workspace, agent, latest_version = dependencies
 
-        latest_version = agent.versions[-1]
         routing_config = dict(latest_version.routing_config or {})
         vendor_config = dict(latest_version.vendor_config or {})
         runtime_profile = dict(vendor_config.get("runtime_profile", {}))
@@ -344,19 +340,20 @@ class LiveTestSessionService:
         workflow_profile = dict(runtime_profile.get("workflow", {}))
         prompt_profile = dict(runtime_profile.get("prompt", {}))
 
-        stt_account = self.provider_accounts.get_for_tenant(
-            tenant.id, stt_profile.get("providerAccountId")
+        provider_account_ids = [
+            stt_profile.get("providerAccountId"),
+            llm_profile.get("providerAccountId"),
+            tts_profile.get("providerAccountId"),
+            telephony_profile.get("providerAccountId"),
+        ]
+        provider_accounts = self.provider_accounts.get_many_for_tenant(
+            tenant.id, (account_id for account_id in provider_account_ids if account_id)
         )
-        llm_account = self.provider_accounts.get_for_tenant(
-            tenant.id, llm_profile.get("providerAccountId")
-        )
-        tts_account = self.provider_accounts.get_for_tenant(
-            tenant.id, tts_profile.get("providerAccountId")
-        )
+        stt_account = provider_accounts.get(_coerce_uuid(stt_profile.get("providerAccountId")))
+        llm_account = provider_accounts.get(_coerce_uuid(llm_profile.get("providerAccountId")))
+        tts_account = provider_accounts.get(_coerce_uuid(tts_profile.get("providerAccountId")))
         telephony_account = (
-            self.provider_accounts.get_for_tenant(
-                tenant.id, telephony_profile.get("providerAccountId")
-            )
+            provider_accounts.get(_coerce_uuid(telephony_profile.get("providerAccountId")))
             if telephony_profile.get("providerAccountId")
             else None
         )
@@ -426,7 +423,10 @@ class LiveTestSessionService:
             "launch_number": launch_number,
         }
 
-        return PreparedBrowserRtcSession(
+        prepared = PreparedBrowserRtcSession(
+            tenant_id=tenant.id,
+            workspace_id=workspace.id,
+            agent_version_id=latest_version.id,
             agent_name=agent.name,
             launch_number=launch_number,
             vendor_trace=vendor_trace,
@@ -439,16 +439,40 @@ class LiveTestSessionService:
                 room=payload.room,
                 stt=BrowserRtcDeepgramInput(
                     api_key=stt_api_key,
-                    model=_normalize_string(stt_profile.get("model"), "flux-general-en"),
+                    model=_resolve_browser_stt_model(stt_profile.get("model")),
                     language=_normalize_string(stt_profile.get("language"), "en-US"),
                     keyterms=_parse_csv_values(stt_profile.get("keyterms")),
                     enable_diarization=_coerce_bool(
                         stt_profile.get("enableDiarization", False), False
                     ),
                     endpointing_ms=_coerce_int(
-                        stt_profile.get("endpointingMs", 25),
-                        25,
+                        stt_profile.get("endpointingMs", 400),
+                        400,
                         min_value=0,
+                        max_value=1200,
+                    ),
+                    eager_eot_threshold=_coerce_bounded_float(
+                        stt_profile.get("eagerEotThreshold", 0.35),
+                        0.35,
+                        min_value=0.0,
+                        max_value=0.9,
+                    ),
+                    eot_threshold=_coerce_bounded_float(
+                        stt_profile.get("eotThreshold", 0.6),
+                        0.6,
+                        min_value=0.5,
+                        max_value=0.9,
+                    ),
+                    eot_timeout_ms=_coerce_int(
+                        stt_profile.get("eotTimeoutMs", 800),
+                        800,
+                        min_value=100,
+                        max_value=3000,
+                    ),
+                    utterance_end_ms=_coerce_int(
+                        stt_profile.get("utteranceEndMs", 800),
+                        800,
+                        min_value=100,
                         max_value=3000,
                     ),
                     interim_results=_coerce_bool(stt_profile.get("interimResults", True), True),
@@ -457,6 +481,15 @@ class LiveTestSessionService:
                     api_key=llm_api_key,
                     model=_normalize_string(llm_profile.get("model"), "gpt-4.1-mini"),
                     temperature=_coerce_float(llm_profile.get("temperature", 0.2), 0.2),
+                    max_output_tokens=_coerce_int(
+                        llm_profile.get("maxOutputTokens", 240),
+                        240,
+                        min_value=64,
+                        max_value=1000,
+                    ),
+                    service_tier=(
+                        "priority" if llm_profile.get("priorityTier") == "priority" else "default"
+                    ),
                 ),
                 tts=BrowserRtcCartesiaInput(
                     api_key=tts_api_key,
@@ -480,6 +513,12 @@ class LiveTestSessionService:
                 participant_name=payload.participant_name,
             ),
         )
+        logger.info(
+            "live.session.prepare.completed",
+            duration_ms=round((perf_counter() - started_at) * 1000, 2),
+            agent_id=str(agent.id),
+        )
+        return prepared
 
     def create_session_record(
         self,
@@ -489,18 +528,34 @@ class LiveTestSessionService:
         session_record: BrowserRtcSessionRecord,
         *,
         launched_by: str,
+        prepared: PreparedBrowserRtcSession | None = None,
     ) -> LiveTestSessionRecord | None:
-        tenant = self.tenants.get_by_slug(tenant_slug)
-        if tenant is None:
-            return None
-        workspace = self.workspaces.get_for_tenant(tenant.id, workspace_id)
-        if workspace is None:
-            return None
-        agent = self.agents.get_definition_for_workspace(tenant.id, workspace.id, payload.agent_id)
-        if agent is None:
-            return None
+        started_at = perf_counter()
+        if prepared is None:
+            tenant = self.tenants.get_by_slug(tenant_slug)
+            if tenant is None:
+                return None
+            workspace = self.workspaces.get_for_tenant(tenant.id, workspace_id)
+            if workspace is None:
+                return None
+            agent = self.agents.get_definition_for_workspace(
+                tenant.id, workspace.id, payload.agent_id
+            )
+            if agent is None:
+                return None
+            latest_version = agent.versions[-1] if agent.versions else None
+            if latest_version is None:
+                return None
+            tenant_id = tenant.id
+            resolved_workspace_id = workspace.id
+            agent_name = agent.name
+            agent_version_id = latest_version.id
+        else:
+            tenant_id = prepared.tenant_id
+            resolved_workspace_id = prepared.workspace_id
+            agent_name = prepared.agent_name
+            agent_version_id = prepared.agent_version_id
 
-        latest_version = agent.versions[-1] if agent.versions else None
         metadata = payload.metadata
         serialized_session = (
             session_record.model_dump() if hasattr(session_record, "model_dump") else {}
@@ -521,14 +576,14 @@ class LiveTestSessionService:
             "participant_name",
             serialized_session.get("participant_name", ""),
         )
-        initial_summary = f"Browser live test prepared for {agent.name}."
+        initial_summary = f"Browser live test prepared for {agent_name}."
         call = self.calls.create(
-            tenant.id,
-            workspace.id,
+            tenant_id,
+            resolved_workspace_id,
             direction="test",
             status="queued",
             is_test=True,
-            agent_version_id=latest_version.id if latest_version is not None else None,
+            agent_version_id=agent_version_id,
             from_number=str(metadata.get("launched_by", launched_by)),
             to_number=str(metadata.get("launch_number", "browser-live")),
             resolved_config={
@@ -539,7 +594,7 @@ class LiveTestSessionService:
                 "dispatch_id": dispatch_id,
                 "participant_identity": participant_identity,
                 "participant_name": participant_name,
-                "agent_name": agent.name,
+                "agent_name": agent_name,
                 "scenario_name": "Browser live test",
                 "status_label": "Completed",
                 "lifecycle_status": "queued",
@@ -567,7 +622,13 @@ class LiveTestSessionService:
                 ],
             },
         )
-        return _build_live_test_session_record(call)
+        record = _build_live_test_session_record(call)
+        logger.info(
+            "live.session.persist.completed",
+            duration_ms=round((perf_counter() - started_at) * 1000, 2),
+            call_id=str(call.id),
+        )
+        return record
 
     def update_session_record(
         self,

@@ -1,6 +1,7 @@
 import asyncio
 from collections.abc import Callable
 from pathlib import Path
+from time import perf_counter
 from typing import Annotated, Literal, TypeVar
 from uuid import UUID
 
@@ -254,7 +255,9 @@ def create_workspace(
     require_tenant_write_access(auth, tenant_slug)
     created = _execute_write(
         session,
-        lambda: WorkspaceAdminService(session).create_workspace(tenant_slug, payload),
+        lambda: WorkspaceAdminService(session).create_workspace(
+            tenant_slug, payload, owner_user_id=auth.user_id
+        ),
     )
     if created is None:
         raise HTTPException(status_code=404, detail="tenant not found")
@@ -268,7 +271,7 @@ def get_workspace(
     session: SessionDependency,
     auth: AuthDependency,
 ):
-    require_workspace_admin_access(auth, tenant_slug, workspace_id)
+    require_workspace_access(auth, tenant_slug, workspace_id)
     workspace = WorkspaceAdminService(session).get_workspace(tenant_slug, workspace_id)
     if workspace is None:
         raise HTTPException(status_code=404, detail="workspace not found")
@@ -338,7 +341,7 @@ def list_team_members(
     session: SessionDependency,
     auth: AuthDependency,
 ):
-    require_workspace_admin_access(auth, tenant_slug, workspace_id)
+    require_workspace_access(auth, tenant_slug, workspace_id)
     members = TeamAdminService(session).list_members(
         tenant_slug,
         workspace_id,
@@ -418,7 +421,7 @@ def list_workspace_agents(
     session: SessionDependency,
     auth: AuthDependency,
 ):
-    require_workspace_write_access(auth, tenant_slug, workspace_id)
+    require_workspace_access(auth, tenant_slug, workspace_id)
     summaries = AgentCatalogService(session).list_workspace_agents(
         tenant_slug,
         workspace_id,
@@ -459,7 +462,7 @@ def get_workspace_agent(
     session: SessionDependency,
     auth: AuthDependency,
 ):
-    require_workspace_write_access(auth, tenant_slug, workspace_id)
+    require_workspace_access(auth, tenant_slug, workspace_id)
     agent = AgentDefinitionAdminService(session).get_agent(tenant_slug, workspace_id, agent_id)
     if agent is None:
         raise HTTPException(status_code=404, detail="agent not found")
@@ -560,7 +563,7 @@ def list_recent_calls(
     auth: AuthDependency,
     limit: int = Query(default=20, ge=1, le=100),
 ):
-    require_workspace_write_access(auth, tenant_slug, workspace_id)
+    require_workspace_access(auth, tenant_slug, workspace_id)
     summaries = CallHistoryService(session).list_recent_calls(
         tenant_slug,
         workspace_id,
@@ -584,7 +587,7 @@ def list_call_logs(
     call_type: Literal["all", "production", "test"] = Query(default="all"),
     query: str | None = Query(default=None, max_length=120),
 ):
-    require_workspace_write_access(auth, tenant_slug, workspace_id)
+    require_workspace_access(auth, tenant_slug, workspace_id)
     response = CallHistoryService(session).list_call_logs(
         tenant_slug,
         workspace_id,
@@ -874,7 +877,9 @@ async def create_browser_rtc_session(
     session: SessionDependency,
     auth: AuthDependency,
 ):
+    request_started_at = perf_counter()
     require_workspace_write_access(auth, tenant_slug, workspace_id)
+    prepare_started_at = perf_counter()
     try:
         prepared = LiveTestSessionService(session).prepare_browser_session(
             tenant_slug, workspace_id, payload
@@ -883,7 +888,13 @@ async def create_browser_rtc_session(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if prepared is None:
         raise HTTPException(status_code=404, detail="live test session dependencies not found")
+    logger.info(
+        "live.session.step",
+        step="browser_session_prepared",
+        duration_ms=round((perf_counter() - prepare_started_at) * 1000, 2),
+    )
     realtime = RealtimeSessionService(request.app.state.settings)
+    realtime_started_at = perf_counter()
     try:
         created = await realtime.create_browser_session(
             prepared.session_input,
@@ -892,6 +903,12 @@ async def create_browser_rtc_session(
         )
     except RealtimeSessionError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    logger.info(
+        "live.session.step",
+        step="realtime_session_created",
+        duration_ms=round((perf_counter() - realtime_started_at) * 1000, 2),
+    )
+    persist_started_at = perf_counter()
     try:
         live_record = _execute_write(
             session,
@@ -901,9 +918,10 @@ async def create_browser_rtc_session(
                 prepared.session_input,
                 created,
                 launched_by=auth.email,
+                prepared=prepared,
             ),
         )
-    except HTTPException:
+    except Exception:
         await realtime.cleanup_browser_session(
             room_name=created.room_name, dispatch_id=created.dispatch_id
         )
@@ -913,16 +931,23 @@ async def create_browser_rtc_session(
             room_name=created.room_name, dispatch_id=created.dispatch_id
         )
         raise HTTPException(status_code=404, detail="live test agent not found")
+    logger.info(
+        "live.session.step",
+        step="browser_call_persisted",
+        duration_ms=round((perf_counter() - persist_started_at) * 1000, 2),
+        total_duration_ms=round((perf_counter() - request_started_at) * 1000, 2),
+    )
     created.call_id = live_record.call_id
     return created.model_dump()
 
 
 @router.patch("/tenants/{tenant_slug}/workspaces/{workspace_id}/live/sessions/{call_id}")
-def update_live_test_session(
+async def update_live_test_session(
     tenant_slug: str,
     workspace_id: UUID,
     call_id: UUID,
     payload: LiveTestSessionUpdateInput,
+    request: Request,
     session: SessionDependency,
     auth: AuthDependency,
 ):
@@ -935,6 +960,21 @@ def update_live_test_session(
     )
     if updated is None:
         raise HTTPException(status_code=404, detail="live test session not found")
+    if payload.lifecycle_status in {"completed", "failed", "cancelled"}:
+        try:
+            await asyncio.wait_for(
+                RealtimeSessionService(request.app.state.settings).cleanup_browser_session(
+                    room_name=updated.room_name,
+                    dispatch_id=updated.dispatch_id or None,
+                ),
+                timeout=3,
+            )
+        except Exception as cleanup_error:
+            logger.warning(
+                "live.session.cleanup_failed",
+                call_id=str(call_id),
+                error=cleanup_error.__class__.__name__,
+            )
     return updated.model_dump()
 
 
@@ -1036,7 +1076,7 @@ def get_provider_account(
     session: SessionDependency,
     auth: AuthDependency,
 ):
-    require_tenant_write_access(auth, tenant_slug)
+    require_tenant_access(auth, tenant_slug)
     account = ProviderAccountAdminService(session).get_account(tenant_slug, provider_account_id)
     if account is None:
         raise HTTPException(status_code=404, detail="provider account not found")

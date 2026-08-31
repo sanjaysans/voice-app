@@ -6,7 +6,7 @@ from voice_pipeline.domain.models import PipelineBlueprint, RuntimePlan
 from voice_pipeline.domain.session import ClientSessionRequest
 from voice_pipeline.infrastructure.livekit_runtime import LiveKitRuntimeValidator
 from voice_pipeline.infrastructure.provider_registry import default_provider_registry
-from voice_pipeline.security import decrypt_runtime_metadata
+from voice_pipeline.security import decrypt_runtime_metadata, encrypt_runtime_metadata
 
 
 def blueprint_for_client_session(
@@ -49,7 +49,9 @@ def build_session_manifest(
     return {
         "session": session_request.sanitized_summary(),
         "dispatch_agent_name": session_request.dispatch_agent_name,
-        "dispatch_metadata": session_request.to_worker_metadata(),
+        "dispatch_metadata": encrypt_runtime_metadata(
+            session_request.to_worker_metadata(), settings
+        ),
         "runtime": runtime.model_dump(mode="json"),
         "warnings": plan.warnings,
         "errors": plan.errors,

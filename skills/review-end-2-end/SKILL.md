@@ -16,6 +16,18 @@ remaining work is explicitly blocked by external dependencies or manual-only rev
    for a narrower scope.
 3. Review from the repo root, not from an individual package in isolation.
 
+## Shared Review Disciplines
+
+Apply these skills inside the roster and resolver loop:
+
+1. Use `codebase-design` vocabulary when reviewing module depth, seams, adapters, and locality.
+2. Use `diagnosing-bugs` for reproducible bug or performance findings, especially in LiveKit,
+   browser media, STT, TTS, and persistence paths.
+3. Use `tdd` for the developer-resolver regression test before changing behavior whenever a
+   suitable public seam exists.
+4. Use `research` only for vendor or standards questions that require first-party evidence,
+   and capture durable findings under `docs/research/`.
+
 ## Required Reviewer Roster
 
 Spawn these reviewer lanes in parallel. Each lane owns its own perspective and should avoid
@@ -65,3 +77,5 @@ When reporting back:
   coverage when the happy paths are incomplete.
 - The senior FDE lane should review repo-local skills, harnesses, and quality gates instead of
   application behavior alone.
+- The developer-resolver should use `diagnosing-bugs` and `tdd` for bug fixes, then re-run the
+  affected reviewers and the full baseline.

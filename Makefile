@@ -59,13 +59,13 @@ db-verify:
 	VOICE_ENVIRONMENT=$(ENV) $(UV) run --package voice-migrator voice-db-verify
 
 backend:
-	VOICE_ENVIRONMENT=$(ENV) VOICE_LIVEKIT_URL=$${VOICE_LIVEKIT_URL:-ws://127.0.0.1:7880} VOICE_LIVEKIT_API_KEY=$${VOICE_LIVEKIT_API_KEY:-devkey} VOICE_LIVEKIT_API_SECRET=$${VOICE_LIVEKIT_API_SECRET:-secret} $(UV) run --package voice-backend voice-backend-dev
+	VOICE_ENVIRONMENT=$(ENV) VOICE_LIVEKIT_URL=$${VOICE_LIVEKIT_URL:-ws://127.0.0.1:7880} VOICE_LIVEKIT_API_KEY=$${VOICE_LIVEKIT_API_KEY:-devkey} VOICE_LIVEKIT_API_SECRET=$${VOICE_LIVEKIT_API_SECRET:-voice-local-dev-livekit-secret-32} $(UV) run --package voice-backend voice-backend-dev
 
 pipeline:
-	VOICE_ENVIRONMENT=$(ENV) VOICE_LIVEKIT_URL=$${VOICE_LIVEKIT_URL:-ws://127.0.0.1:7880} VOICE_LIVEKIT_API_KEY=$${VOICE_LIVEKIT_API_KEY:-devkey} VOICE_LIVEKIT_API_SECRET=$${VOICE_LIVEKIT_API_SECRET:-secret} $(UV) run --package voice-pipeline voice-pipeline-dev
+	VOICE_ENVIRONMENT=$(ENV) VOICE_LIVEKIT_URL=$${VOICE_LIVEKIT_URL:-ws://127.0.0.1:7880} VOICE_LIVEKIT_API_KEY=$${VOICE_LIVEKIT_API_KEY:-devkey} VOICE_LIVEKIT_API_SECRET=$${VOICE_LIVEKIT_API_SECRET:-voice-local-dev-livekit-secret-32} $(UV) run --package voice-pipeline voice-pipeline-dev
 
 pipeline-worker:
-	VOICE_ENVIRONMENT=$(ENV) VOICE_LIVEKIT_STARTUP_MODE=dispatch VOICE_LIVEKIT_URL=$${VOICE_LIVEKIT_URL:-ws://127.0.0.1:7880} VOICE_LIVEKIT_API_KEY=$${VOICE_LIVEKIT_API_KEY:-devkey} VOICE_LIVEKIT_API_SECRET=$${VOICE_LIVEKIT_API_SECRET:-secret} $(UV) run --package voice-pipeline voice-pipeline-worker dev
+	VOICE_ENVIRONMENT=$(ENV) VOICE_LIVEKIT_STARTUP_MODE=dispatch VOICE_LIVEKIT_URL=$${VOICE_LIVEKIT_URL:-ws://127.0.0.1:7880} VOICE_LIVEKIT_API_KEY=$${VOICE_LIVEKIT_API_KEY:-devkey} VOICE_LIVEKIT_API_SECRET=$${VOICE_LIVEKIT_API_SECRET:-voice-local-dev-livekit-secret-32} $(UV) run --package voice-pipeline voice-pipeline-worker dev
 
 jobs:
 	VOICE_ENVIRONMENT=$(ENV) $(UV) run --package voice-jobs voice-jobs-dev

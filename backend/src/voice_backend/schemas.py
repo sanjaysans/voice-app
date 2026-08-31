@@ -170,6 +170,12 @@ class AgentVersionCreateInput(BaseModel):
     routing_config: dict[str, object] = Field(default_factory=dict)
     vendor_config: dict[str, object] = Field(default_factory=dict)
 
+    @model_validator(mode="after")
+    def validate_vendor_config(self) -> AgentVersionCreateInput:
+        if _contains_secret_key(self.vendor_config):
+            raise ValueError("agent vendor configuration must reference provider accounts, not secrets")
+        return self
+
 
 class AgentDefinitionRecord(BaseModel):
     agent_id: UUID
@@ -335,6 +341,8 @@ class AgentStudioUpdateInput(BaseModel):
             keys = [variable.key for variable in self.variables]
             if len(keys) != len(set(keys)):
                 raise ValueError("agent variables must have unique keys")
+        if self.runtime_profile is not None and _contains_secret_key(self.runtime_profile):
+            raise ValueError("agent runtime configuration must reference provider accounts, not secrets")
         return self
 
 
@@ -444,6 +452,19 @@ def _contains_secret_key(value: object) -> bool:
     elif isinstance(value, list):
         return any(_contains_secret_key(item) for item in value)
     return False
+
+
+def redact_secret_fields(value: object) -> object:
+    """Remove secret-shaped fields before agent configuration crosses a read boundary."""
+    if isinstance(value, dict):
+        return {
+            str(key): redact_secret_fields(item)
+            for key, item in value.items()
+            if not _contains_secret_key({key: item})
+        }
+    if isinstance(value, list):
+        return [redact_secret_fields(item) for item in value]
+    return value
 
 
 class EvalCaseCreateInput(BaseModel):
@@ -726,7 +747,8 @@ class BrowserRtcRoomInput(BaseModel):
     auto_gain_control: bool = True
     pre_connect_audio: bool = True
     close_on_disconnect: bool = True
-    delete_room_on_close: bool = False
+    # Browser test rooms are disposable resources and must not survive a call.
+    delete_room_on_close: bool = True
 
 
 class BrowserRtcDeepgramInput(BaseModel):
@@ -737,10 +759,11 @@ class BrowserRtcDeepgramInput(BaseModel):
     interim_results: bool = True
     punctuate: bool = True
     smart_format: bool = True
-    endpointing_ms: int = 25
+    endpointing_ms: int = 400
     utterance_end_ms: int | None = None
-    eager_eot_threshold: float | None = 0.4
-    eot_threshold: float | None = None
+    eager_eot_threshold: float | None = 0.35
+    eot_threshold: float | None = 0.6
+    eot_timeout_ms: int | None = 800
     keywords: list[str] = Field(default_factory=list)
     keyterms: list[str] = Field(default_factory=list)
     enable_diarization: bool = False
@@ -750,7 +773,8 @@ class BrowserRtcOpenAiInput(BaseModel):
     api_key: str
     model: str = "gpt-4.1-mini"
     temperature: float = 0.2
-    max_output_tokens: int | None = 500
+    max_output_tokens: int | None = 240
+    service_tier: Literal["default", "priority"] = "default"
     base_url: str | None = None
     user: str | None = None
 
@@ -768,7 +792,7 @@ class BrowserRtcCartesiaInput(BaseModel):
 
 class BrowserRtcVadInput(BaseModel):
     min_speech_duration: float = 0.05
-    min_silence_duration: float = 0.55
+    min_silence_duration: float = 0.25
     prefix_padding_duration: float = 0.5
     max_buffered_speech: float = 60.0
     activation_threshold: float = 0.5

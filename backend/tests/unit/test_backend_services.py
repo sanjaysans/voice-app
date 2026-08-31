@@ -24,6 +24,7 @@ from voice_backend.schemas import (
     WorkspaceCreateInput,
     WorkspaceUpdateInput,
 )
+from voice_backend.secrets import decrypt_provider_config
 from voice_backend.services import (
     AgentCatalogService,
     AgentDefinitionAdminService,
@@ -208,6 +209,37 @@ def test_provider_account_admin_service_updates_existing_account(session, seeded
     assert updated is not None
     assert updated.status == "inactive"
     assert updated.has_config is True
+
+
+def test_provider_account_update_preserves_redacted_secrets(session, seeded_domain) -> None:
+    service = ProviderAccountAdminService(session)
+    created = service.create_account(
+        "voice-demo",
+        ProviderAccountCreateInput(
+            provider_kind="llm",
+            vendor_name="openai",
+            label="Primary LLM",
+            config={"api_key": "sk-live", "display_name": "Primary LLM"},
+        ),
+    )
+
+    assert created is not None
+    updated = service.update_account(
+        "voice-demo",
+        created.provider_account_id,
+        ProviderAccountUpdateInput(
+            label="Updated LLM",
+            config={"display_name": "Updated LLM", "api_key": ""},
+        ),
+    )
+    stored = ProviderAccountRepository(session).get_for_tenant(
+        seeded_domain["tenant"].id, created.provider_account_id
+    )
+
+    assert updated is not None
+    assert stored is not None
+    assert decrypt_provider_config(stored.config)["api_key"] == "sk-live"
+    assert decrypt_provider_config(stored.config)["display_name"] == "Updated LLM"
 
 
 def test_provider_account_admin_service_runs_health_check(
@@ -692,10 +724,17 @@ def test_live_test_session_service_sanitizes_invalid_stt_runtime_values(
     )
 
     assert prepared is not None
-    assert prepared.session_input.stt.endpointing_ms == 25
+    assert prepared.session_input.stt.model == "flux-general-en"
+    assert prepared.session_input.stt.endpointing_ms == 400
+    assert prepared.session_input.stt.utterance_end_ms == 800
+    assert prepared.session_input.stt.eager_eot_threshold == 0.35
+    assert prepared.session_input.stt.eot_threshold == 0.6
+    assert prepared.session_input.stt.eot_timeout_ms == 800
     assert prepared.session_input.stt.interim_results is False
     assert prepared.session_input.stt.enable_diarization is False
     assert prepared.session_input.llm.temperature == 0.2
+    assert prepared.session_input.llm.max_output_tokens == 240
+    assert prepared.session_input.llm.service_tier == "default"
     assert prepared.session_input.tts.speed == 1
     assert prepared.session_input.tts.volume == 1
     assert prepared.session_input.tts.sample_rate == 24000
@@ -725,8 +764,9 @@ async def test_realtime_session_service_builds_join_credentials(monkeypatch) -> 
         async def __aexit__(self, exc_type, exc_val, exc_tb):
             return None
 
-        async def post(self, _url, json):
+        async def post(self, _url, json, headers):
             assert json["dispatch_agent_name"] == "voice-router-agent"
+            assert headers["X-Voice-Internal-Key"] == "voice-local-internal-key"
             return StubResponse()
 
     class StubDispatch:

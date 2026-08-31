@@ -1,5 +1,9 @@
 # Frontend UI Guidelines
 
+Use `frontend-architecture` for module and data-flow decisions, `frontend-quality` for behavior,
+accessibility, and responsive validation, and `frontend-visual-system` for visual direction,
+themes, typography, tokens, and motion. This skill remains the concise Voice-specific baseline.
+
 ## Goal
 
 Keep the product UI consistent, believable, and safe against duplicate user actions as the mock design evolves into the real frontend.

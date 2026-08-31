@@ -479,6 +479,7 @@ def main() -> None:
                 select(calls_table.c.id).where(calls_table.c.workspace_id == workspace_id).limit(1)
             ).first():
                 demo_agents = build_demo_agents(tenant_id, workspace_id)
+                seeded_demo_agents: list[dict[str, object]] = []
                 for agent in demo_agents:
                     definition = agent["definition"]
                     version = agent["version"]
@@ -512,7 +513,21 @@ def main() -> None:
                         )
                     )
 
-                for call in build_demo_calls(tenant_id, workspace_id, demo_agents):
+                    actual_version = connection.execute(
+                        select(agent_versions_table.c.id).where(
+                            agent_versions_table.c.agent_definition_id == agent_row.id,
+                            agent_versions_table.c.version_number == version["version_number"],
+                        )
+                    ).one()
+                    seeded_demo_agents.append(
+                        {
+                            **agent,
+                            "definition": {**definition, "id": agent_row.id},
+                            "version": {**version, "id": actual_version.id},
+                        }
+                    )
+
+                for call in build_demo_calls(tenant_id, workspace_id, seeded_demo_agents):
                     connection.execute(insert(calls_table).values(**call))
 
     logger.info(

@@ -12,6 +12,7 @@ from voice_backend.schemas import (
     AgentStudioUpdateInput,
     AgentVersionCreateInput,
     AgentVersionRecord,
+    redact_secret_fields,
 )
 from voice_backend.services.agent_config import normalize_flow_edges, normalize_flow_nodes
 from voice_backend.services.read_cache import clear_read_cache, get_read_cache, set_read_cache
@@ -59,7 +60,7 @@ def _to_version_record(version) -> AgentVersionRecord:
         version_number=version.version_number,
         pipeline_mode=version.pipeline_mode,
         routing_config=version.routing_config,
-        vendor_config=version.vendor_config,
+        vendor_config=redact_secret_fields(version.vendor_config),
         published_at=version.published_at,
         created_at=version.created_at,
     )
@@ -102,7 +103,7 @@ def _to_studio_record(agent) -> AgentStudioRecord:
             "stack",
             {"stt": "Deepgram", "llm": "GPT-4.1", "tts": "ElevenLabs"},
         ),
-        runtime_profile=vendor_config.get("runtime_profile", {}),
+        runtime_profile=redact_secret_fields(vendor_config.get("runtime_profile", {})),
         variables=routing_config.get("variables", []),
         flow_nodes=flow_nodes,
         flow_edges=normalize_flow_edges(routing_config.get("flow_edges", []), flow_nodes),

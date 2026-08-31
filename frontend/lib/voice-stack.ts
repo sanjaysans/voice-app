@@ -89,6 +89,9 @@ export type AgentRuntimeProfile = {
     keyterms: string;
     additionalVocabulary: string;
     endpointingMs: number;
+    eagerEotThreshold: number;
+    eotThreshold: number;
+    eotTimeoutMs: number;
     interimResults: boolean;
     enableDiarization: boolean;
   };
@@ -100,6 +103,7 @@ export type AgentRuntimeProfile = {
     topP: number;
     priorityTier: string;
     maxRetries: number;
+    maxOutputTokens: number;
   };
   tts: {
     providerAccountId: string;
@@ -237,7 +241,10 @@ export const PROVIDER_DEFINITIONS: Record<SupportedProviderKind, VoiceConnection
           description: "Custom biasing terms or domain vocabulary.",
           placeholder: "intake, booking, escalation"
         },
-        { id: "endpointingMs", label: "Endpointing (ms)", type: "number", min: 0, max: 3000, step: 25 },
+        { id: "endpointingMs", label: "Endpointing (ms)", type: "number", min: 0, max: 1200, step: 25 },
+        { id: "eagerEotThreshold", label: "Eager end-of-turn threshold", type: "number", min: 0, max: 0.9, step: 0.05 },
+        { id: "eotThreshold", label: "End-of-turn threshold", type: "number", min: 0.5, max: 0.9, step: 0.05 },
+        { id: "eotTimeoutMs", label: "End-of-turn timeout (ms)", type: "number", min: 100, max: 3000, step: 50 },
         { id: "interimResults", label: "Interim results", type: "boolean" },
         { id: "enableDiarization", label: "Speaker diarization", type: "boolean" }
       ],
@@ -294,7 +301,8 @@ export const PROVIDER_DEFINITIONS: Record<SupportedProviderKind, VoiceConnection
             { label: "2", value: "2" },
             { label: "3", value: "3" }
           ]
-        }
+        },
+        { id: "maxOutputTokens", label: "Maximum response tokens", type: "number", min: 64, max: 1000, step: 16 }
       ],
       models: [
         { label: "GPT-4.1 mini", value: "gpt-4.1-mini" },
@@ -446,7 +454,10 @@ export function buildDefaultRuntimeProfile(): AgentRuntimeProfile {
       language: "en-US",
       keyterms: "",
       additionalVocabulary: "",
-      endpointingMs: 25,
+      endpointingMs: 400,
+      eagerEotThreshold: 0.35,
+      eotThreshold: 0.6,
+      eotTimeoutMs: 800,
       interimResults: true,
       enableDiarization: false
     },
@@ -457,7 +468,8 @@ export function buildDefaultRuntimeProfile(): AgentRuntimeProfile {
       temperature: 0.2,
       topP: 1,
       priorityTier: "standard",
-      maxRetries: 2
+      maxRetries: 2,
+      maxOutputTokens: 240
     },
     tts: {
       providerAccountId: "",
@@ -581,13 +593,7 @@ export function resolveProviderHealthCheckEndpoint(
 
 export function buildDefaultConnectionConfig(kind: SupportedProviderKind, vendor: string) {
   const definition = getProviderDefinition(kind, vendor);
-  const defaults: Record<string, unknown> = {
-    kind,
-    vendor,
-    ui_status: "Connected",
-    last_checked: "Configured now",
-    detail: `${getProviderLabel(kind, vendor)} is configured and ready for agent setup.`
-  };
+  const defaults: Record<string, unknown> = {};
 
   for (const field of definition?.connectionFields ?? []) {
     if (field.id === "display_name") {
@@ -609,11 +615,26 @@ export function buildDefaultConnectionConfig(kind: SupportedProviderKind, vendor
     defaults[field.id] = "";
   }
 
-  if (kind === "telephony") {
-    defaults.phone_numbers = "+1 415 555 0101";
-    defaults.region = "us1";
-  }
   return defaults;
+}
+
+export function pickConnectionConfig(
+  kind: SupportedProviderKind,
+  vendor: string,
+  values: Record<string, unknown>
+) {
+  const fieldIds = new Set(
+    getProviderDefinition(kind, vendor)?.connectionFields.map((field) => field.id) ?? []
+  );
+
+  return Object.fromEntries(
+    Object.entries(values).filter(([key, value]) => {
+      if (!fieldIds.has(key)) {
+        return false;
+      }
+      return value !== "" && value !== null && value !== undefined;
+    })
+  );
 }
 
 export function parsePhoneNumbers(value: unknown) {

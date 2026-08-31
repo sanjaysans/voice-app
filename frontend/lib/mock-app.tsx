@@ -11,19 +11,14 @@ import {
 } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import {
-  createActiveCall,
   createAgent,
   type AgentCreationMode,
   dateRanges,
-  demoScenarios,
-  getTimeLabel,
-  type ActiveCall,
   type Agent,
   type AgentVariable,
   type FlowEdge,
   type CallRecord,
   type Connection,
-  type DemoScenario,
   type NotificationItem,
 } from "@/lib/mock-data";
 import { ApiError, api } from "@/lib/api-client";
@@ -39,7 +34,6 @@ import {
 } from "@/lib/voice-stack";
 import { Button } from "@/components/ui";
 
-type CallsView = "launch" | "live";
 type RouteDataScope = "light" | "agents" | "providers" | "full";
 
 type MockAppContextValue = {
@@ -63,13 +57,13 @@ type MockAppContextValue = {
   selectedAgent: Agent | null;
   connections: Connection[];
   providerAccounts: ProviderAccountRecord[];
-  activeCall: ActiveCall | null;
   callHistory: CallRecord[];
   selectedCallId: string;
   selectedCall: CallRecord | null;
-  callsView: CallsView;
   notifications: NotificationItem[];
-  scenarios: DemoScenario[];
+  isRouteDataLoading: boolean;
+  routeDataError: string;
+  retryRouteData: () => Promise<void>;
   dateRange: string;
   selectAgent: (agentId: string) => void;
   reloadWorkspaceContext: (preferredWorkspaceId?: string) => Promise<void>;
@@ -111,14 +105,6 @@ type MockAppContextValue = {
     config: Record<string, unknown>;
   }) => Promise<void>;
   deleteConnection: (connectionId: string) => Promise<void>;
-  startCall: (payload: {
-    agentId: string;
-    scenarioId: string;
-    leadName: string;
-    company: string;
-    phone: string;
-  }) => void;
-  setCallsView: (view: CallsView) => void;
   selectCall: (callId: string) => void;
   markSynced: (callId: string) => Promise<void>;
   deleteCall: (callId: string) => Promise<void>;
@@ -194,6 +180,8 @@ type ProviderAccountResponse = {
 type CallResponse = {
   call_id: string;
   agent_id: string | null;
+  is_test?: boolean;
+  direction?: string;
   agent_name: string;
   lead_name: string;
   company: string;
@@ -212,6 +200,9 @@ type CallResponse = {
   tool_calls: Array<{ name: string; result: string }>;
   guardrails: string[];
   transcript: Array<{ speaker: "Lead" | "Voice"; timestamp: string; text: string }>;
+  created_at?: string;
+  started_at?: string | null;
+  ended_at?: string | null;
 };
 
 type AppStateResponse = {
@@ -465,6 +456,9 @@ function upsertAgent(currentAgents: Agent[], nextAgent: Agent) {
 function toCallRecord(response: CallResponse): CallRecord {
   return {
     id: response.call_id,
+    isTest: response.is_test,
+    createdAt: response.created_at,
+    direction: response.direction,
     agentId: response.agent_id ?? "",
     agentName: response.agent_name,
     leadName: response.lead_name,
@@ -501,21 +495,26 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
   const [selectedAgentId, setSelectedAgentId] = useState("");
   const [connections, setConnections] = useState<Connection[]>([]);
   const [providerAccounts, setProviderAccounts] = useState<ProviderAccountRecord[]>([]);
-  const [activeCall, setActiveCall] = useState<ActiveCall | null>(null);
   const [callHistory, setCallHistory] = useState<CallRecord[]>([]);
   const [selectedCallId, setSelectedCallId] = useState("");
-  const [callsView, setCallsView] = useState<CallsView>("launch");
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [dateRange, setDateRange] = useState(dateRanges[1]);
   const [isReady, setIsReady] = useState(false);
-  const [, setIsHydratingRouteData] = useState(false);
+  const [isHydratingRouteData, setIsHydratingRouteData] = useState(false);
+  const [routeDataError, setRouteDataError] = useState("");
   const [bootstrapError, setBootstrapError] = useState("");
+  const activeContextRef = useRef({ tenantSlug: "", workspaceId: "" });
+  const hydrationGenerationRef = useRef(0);
   const hydratedScopeRef = useRef<{
     tenantSlug: string;
     workspaceId: string;
     scope: RouteDataScope;
   } | null>(null);
   const routeDataScope = useMemo(() => getRouteDataScope(pathname), [pathname]);
+
+  useEffect(() => {
+    activeContextRef.current = { tenantSlug, workspaceId };
+  }, [tenantSlug, workspaceId]);
 
   function applyProviderAccounts(nextProviderAccounts: ProviderAccountRecord[]) {
     setProviderAccounts(nextProviderAccounts);
@@ -589,6 +588,13 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
     const nextProviderAccounts = state.provider_accounts.map(toProviderAccount);
     const nextCalls = state.calls.map(toCallRecord);
 
+    if (
+      activeContextRef.current.tenantSlug !== currentTenantSlug ||
+      activeContextRef.current.workspaceId !== currentWorkspaceId
+    ) {
+      return;
+    }
+
     setAgents(nextAgents);
     applyProviderAccounts(nextProviderAccounts);
     setCallHistory(nextCalls);
@@ -620,6 +626,12 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
       `/api/v1/tenants/${currentTenantSlug}/workspaces/${currentWorkspaceId}/agents`
     );
     const nextAgents = state.map(toAgentSummary);
+    if (
+      activeContextRef.current.tenantSlug !== currentTenantSlug ||
+      activeContextRef.current.workspaceId !== currentWorkspaceId
+    ) {
+      return;
+    }
     setAgents(nextAgents);
     setSelectedAgentId((current) =>
       nextAgents.some((agent) => agent.id === current) ? current : nextAgents[0]?.id || ""
@@ -636,6 +648,9 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
     const accounts = await api<ProviderAccountResponse[]>(
       `/api/v1/tenants/${currentTenantSlug}/provider-accounts`
     );
+    if (activeContextRef.current.tenantSlug !== currentTenantSlug) {
+      return;
+    }
     applyProviderAccounts(accounts.map(toProviderAccount));
   }
 
@@ -668,6 +683,7 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
 
     const requestContext = { ...context, scope };
     hydratedScopeRef.current = requestContext;
+    const requestGeneration = ++hydrationGenerationRef.current;
     setIsHydratingRouteData(true);
     try {
       if (scope === "agents") {
@@ -687,7 +703,9 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
       }
       throw error;
     } finally {
-      setIsHydratingRouteData(false);
+      if (hydrationGenerationRef.current === requestGeneration) {
+        setIsHydratingRouteData(false);
+      }
     }
   }
 
@@ -738,112 +756,34 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
     if (!isReady || !tenantSlug || !workspaceId) {
       return;
     }
-    void hydrateRouteData(routeDataScope, { tenantSlug, workspaceId });
+    setRouteDataError("");
+    void hydrateRouteData(routeDataScope, { tenantSlug, workspaceId }).catch((error) => {
+      if (
+        activeContextRef.current.tenantSlug === tenantSlug &&
+        activeContextRef.current.workspaceId === workspaceId
+      ) {
+        setRouteDataError(
+          error instanceof ApiError && error.status === 401
+            ? "Your session expired. Sign in again to continue."
+            : "We couldn’t load this surface. Check the backend and retry."
+        );
+      }
+      console.error("route data hydration failed", error);
+    });
   }, [isReady, routeDataScope, tenantSlug, workspaceId]);
 
-  useEffect(() => {
-    if (!activeCall || !workspaceId) {
+  async function retryRouteData() {
+    if (!tenantSlug || !workspaceId) {
       return;
     }
-
-    if (activeCall.phaseIndex >= activeCall.phases.length - 1) {
-      const finalizeTimer = window.setTimeout(() => {
-        void (async () => {
-          const agent = agents.find((item) => item.id === activeCall.agentId);
-          const scenario = demoScenarios.find((item) => item.id === activeCall.scenarioId);
-
-          if (!agent || !scenario) {
-            setActiveCall(null);
-            return;
-          }
-
-          const created = await api<CallResponse>(
-            `/api/v1/tenants/${tenantSlug}/workspaces/${workspaceId}/calls`,
-            {
-              method: "POST",
-              body: JSON.stringify({
-                agent_id: activeCall.agentId,
-                lead_name: activeCall.leadName,
-                company: activeCall.company,
-                phone: activeCall.phone,
-                scenario_name: activeCall.scenarioName,
-                status:
-                  scenario.outcome === "Voicemail"
-                    ? "Dropped"
-                    : scenario.outcome === "Follow-up"
-                      ? "Follow-up"
-                      : "Completed",
-                duration: `0${activeCall.phases.length}:1${activeCall.transcript.length}`,
-                summary: `${scenario.summary} This run used the ${agent.name} workflow and completed the configured next-step routing.`,
-                outcome: scenario.outcome,
-                next_step: scenario.nextStep,
-                vendor_trace: `${agent.stack.stt} -> ${agent.stack.llm} -> ${agent.stack.tts}`,
-                synced_to_crm: false,
-                extracted_variables: scenario.extractedVariables,
-                tool_calls: scenario.toolCalls,
-                guardrails: scenario.guardrails,
-                transcript: activeCall.transcript,
-              }),
-            }
-          );
-          const record = toCallRecord(created);
-          await refreshState();
-          setSelectedCallId(record.id);
-          setCallsView("launch");
-          setActiveCall(null);
-          setNotifications((current) => [
-            {
-              id: `note_${Date.now()}`,
-              title: `${record.agentName} completed a call`,
-              message: `${record.leadName} from ${record.company} is ready for review.`,
-              tone: record.statusTone === "danger" ? "warning" : "success",
-              href: "/calls/logs",
-            },
-            ...current,
-          ]);
-        })();
-      }, 1100);
-
-      return () => window.clearTimeout(finalizeTimer);
+    setRouteDataError("");
+    try {
+      await hydrateRouteData(routeDataScope, { tenantSlug, workspaceId });
+    } catch (error) {
+      setRouteDataError("We couldn’t load this surface. Check the backend and retry.");
+      console.error("route data retry failed", error);
     }
-
-    const stepTimer = window.setTimeout(() => {
-      setActiveCall((current) => {
-        if (!current) {
-          return current;
-        }
-
-        const scenario = demoScenarios.find((item) => item.id === current.scenarioId);
-        if (!scenario) {
-          return current;
-        }
-
-        const nextPhaseIndex = current.phaseIndex + 1;
-        const nextTranscriptSeed = scenario.transcriptSeed[nextPhaseIndex];
-        const transcript =
-          nextTranscriptSeed && current.transcript.length <= nextPhaseIndex
-            ? [
-                ...current.transcript,
-                {
-                  ...nextTranscriptSeed,
-                  timestamp: `0${Math.min(nextPhaseIndex + 1, 9)}:${(nextPhaseIndex * 14 + 5)
-                    .toString()
-                    .padStart(2, "0")}`,
-                },
-              ]
-            : current.transcript;
-
-        return {
-          ...current,
-          phaseIndex: nextPhaseIndex,
-          timeline: [...current.timeline, `${getTimeLabel()} • ${current.phases[nextPhaseIndex]}`],
-          transcript,
-        };
-      });
-    }, 1300);
-
-    return () => window.clearTimeout(stepTimer);
-  }, [activeCall, agents, tenantSlug, workspaceId]);
+  }
 
   async function patchAgent(agentId: string, nextAgent: Agent) {
     const updated = await api<AgentStudioResponse>(
@@ -887,13 +827,13 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
       selectedAgent,
       connections,
       providerAccounts,
-      activeCall,
       callHistory,
       selectedCallId,
       selectedCall,
-      callsView,
       notifications,
-      scenarios: demoScenarios,
+      isRouteDataLoading: isHydratingRouteData,
+      routeDataError,
+      retryRouteData,
       dateRange,
       selectAgent: setSelectedAgentId,
       reloadWorkspaceContext: loadWorkspace,
@@ -1087,8 +1027,8 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
           {
             id: `note_${Date.now()}`,
             title: "Connection added",
-            message: `${label} is now available for agent configuration.`,
-            tone: "success",
+            message: `${label} was saved. Run a health check before using it in an agent.`,
+            tone: "warning",
             href: "/connections",
           },
           ...currentItems,
@@ -1100,24 +1040,6 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
         });
         await refreshProviderAccounts();
       },
-      startCall: ({ agentId, scenarioId, leadName, company, phone }) => {
-        const agent = agents.find((item) => item.id === agentId) ?? agents[0];
-        const scenario = demoScenarios.find((item) => item.id === scenarioId) ?? demoScenarios[0];
-        if (!agent) {
-          return;
-        }
-        const call = createActiveCall({
-          agent,
-          scenario,
-          leadName: leadName.trim() || scenario.leadName,
-          company: company.trim() || scenario.company,
-          phone: phone.trim() || scenario.phone,
-        });
-        setSelectedAgentId(agent.id);
-        setActiveCall(call);
-        setCallsView("live");
-      },
-      setCallsView,
       selectCall: (callId) => {
         setSelectedCallId(callId);
       },
@@ -1158,10 +1080,8 @@ export function MockAppProvider({ children }: { children: ReactNode }) {
       setDateRange,
     }),
     [
-      activeCall,
       agents,
       callHistory,
-      callsView,
       connections,
       providerAccounts,
       currentUser,

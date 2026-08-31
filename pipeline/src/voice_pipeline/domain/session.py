@@ -30,7 +30,7 @@ class WebRtcRoomConfig(BaseModel):
     auto_gain_control: bool = True
     pre_connect_audio: bool = True
     close_on_disconnect: bool = True
-    delete_room_on_close: bool = False
+    delete_room_on_close: bool = True
 
 
 class DeepgramSttConfig(BaseModel):
@@ -41,10 +41,11 @@ class DeepgramSttConfig(BaseModel):
     interim_results: bool = True
     punctuate: bool = True
     smart_format: bool = True
-    endpointing_ms: int = 25
+    endpointing_ms: int = 400
     utterance_end_ms: int | None = None
-    eager_eot_threshold: float | None = 0.4
-    eot_threshold: float | None = None
+    eager_eot_threshold: float | None = 0.35
+    eot_threshold: float | None = 0.6
+    eot_timeout_ms: int | None = 800
     keywords: list[str] = Field(default_factory=list)
     keyterms: list[str] = Field(default_factory=list)
     enable_diarization: bool = False
@@ -58,7 +59,8 @@ class OpenAiLlmConfig(BaseModel):
     api_key: SecretStr
     model: str = "gpt-4.1-mini"
     temperature: float = 0.2
-    max_output_tokens: int | None = 500
+    max_output_tokens: int | None = 240
+    service_tier: Literal["default", "priority"] = "default"
     base_url: str | None = None
     user: str | None = None
 
@@ -76,7 +78,7 @@ class CartesiaTtsConfig(BaseModel):
 
 class SileroVadConfig(BaseModel):
     min_speech_duration: float = 0.05
-    min_silence_duration: float = 0.55
+    min_silence_duration: float = 0.25
     prefix_padding_duration: float = 0.5
     max_buffered_speech: float = 60.0
     activation_threshold: float = 0.5
@@ -143,6 +145,7 @@ class ClientSessionRequest(BaseModel):
                 "model": self.llm.model,
                 "temperature": self.llm.temperature,
                 "max_output_tokens": self.llm.max_output_tokens,
+                "service_tier": self.llm.service_tier,
             },
             "tts": {
                 "model": self.tts.model,

@@ -47,6 +47,11 @@ export default function TeamPage() {
   }
 
   useEffect(() => {
+    if (!tenantSlug || !workspaceId) {
+      setMembers([]);
+      setIsLoading(false);
+      return;
+    }
     void loadMembers({ showLoader: true });
   }, [tenantSlug, workspaceId]);
 

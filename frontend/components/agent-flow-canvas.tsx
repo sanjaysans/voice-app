@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
 import type { FlowEdge } from "@/lib/mock-data";
 import { cn } from "@/lib/utils";
 
@@ -29,6 +30,10 @@ const MIN_CANVAS_WIDTH = 900;
 const MIN_CANVAS_HEIGHT = 560;
 const COLUMN_GAP = 320;
 const ROW_GAP = 186;
+const BACK_LANE_SPACING = 120;
+const BACK_LABEL_OFFSET = 62;
+const ADJACENT_LANE_GAP = 30;
+const ROUTE_STUB_LANE_GAP = 36;
 
 type PositionedNode = BuilderNode & {
   left: number;
@@ -166,9 +171,16 @@ export function autoArrangeFlowNodes<T extends BuilderNode>(nodes: T[], edges: F
         const parentRows = (incomingByNode.get(node.id) ?? [])
           .map((parentId) => rows.get(parentId))
           .filter((value): value is number => typeof value === "number");
+        const nodeDepth = depth.get(node.id) ?? 0;
+        const hasLongRangeParent = (incomingByNode.get(node.id) ?? []).some(
+          (parentId) => (depth.get(parentId) ?? 0) < nodeDepth - 1
+        );
+        const hasMultipleParents = parentRows.length > 1 && node.nodeType !== "end_call";
         return {
           node,
-          preferredRow: parentRows.length ? average(parentRows) : index,
+          preferredRow: parentRows.length
+            ? average(parentRows) + (hasLongRangeParent || hasMultipleParents ? 2 : 0)
+            : index,
         };
       })
       .sort(
@@ -197,17 +209,24 @@ export function autoArrangeFlowNodes<T extends BuilderNode>(nodes: T[], edges: F
   }));
 }
 
-function buildCanvasLayout(nodes: BuilderNode[]) {
+function buildCanvasLayout(nodes: BuilderNode[], edges: FlowEdge[]) {
   if (!nodes.length) {
     return {
       nodes: [] as PositionedNode[],
       width: MIN_CANVAS_WIDTH,
       height: MIN_CANVAS_HEIGHT,
+      routeLaneBase: 0,
     };
   }
 
+  const backEdgeCount = edges.filter((edge) => {
+    const source = nodes.find((node) => node.id === edge.sourceId);
+    const target = nodes.find((node) => node.id === edge.targetId);
+    return source && target && target.y < source.y;
+  }).length;
+  const backGutter = backEdgeCount ? 200 + (backEdgeCount - 1) * BACK_LANE_SPACING : 0;
   const positioned = nodes.map((node) => {
-    const left = node.x + CANVAS_PADDING;
+    const left = node.x + CANVAS_PADDING + backGutter;
     const top = node.y + CANVAS_PADDING;
     return {
       ...node,
@@ -222,11 +241,14 @@ function buildCanvasLayout(nodes: BuilderNode[]) {
 
   const maxRight = Math.max(...positioned.map((node) => node.right));
   const maxBottom = Math.max(...positioned.map((node) => node.bottom));
+  const routeLaneBase = maxRight + 64;
+  const routeClearance = edges.length ? 96 + edges.length * 28 : 0;
 
   return {
     nodes: positioned,
-    width: Math.max(MIN_CANVAS_WIDTH, maxRight + CANVAS_PADDING),
-    height: Math.max(MIN_CANVAS_HEIGHT, maxBottom + CANVAS_PADDING),
+    width: Math.max(MIN_CANVAS_WIDTH, maxRight + CANVAS_PADDING + routeClearance),
+    height: Math.max(MIN_CANVAS_HEIGHT, maxBottom + CANVAS_PADDING + routeClearance),
+    routeLaneBase,
   };
 }
 
@@ -285,75 +307,83 @@ function buildEdgeRoute(
   sourceIndex: number,
   sourceTotal: number,
   targetIndex: number,
-  targetTotal: number
+  targetTotal: number,
+  routeIndex: number,
+  routeLaneBase: number,
+  sourceStubY: number,
+  targetStubY: number,
+  backEdgeIndex: number,
+  backEdgeCount: number,
+  adjacentLaneY?: number
 ) {
-  const sourceY = source.centerY + edgeOffset(sourceIndex, sourceTotal);
-  const targetY = target.centerY + edgeOffset(targetIndex, targetTotal);
+  const sourcePortX =
+    source.left + (NODE_WIDTH * (sourceIndex + 1)) / (sourceTotal + 1);
+  const targetPortX =
+    target.left + (NODE_WIDTH * (targetIndex + 1)) / (targetTotal + 1);
+  const sourcePortY = source.centerY + edgeOffset(sourceIndex, sourceTotal);
+  const targetPortY = target.centerY + edgeOffset(targetIndex, targetTotal);
   const isBackEdge = target.centerY < source.centerY - NODE_HEIGHT / 2;
 
   if (isBackEdge) {
-    const laneX = Math.max(source.right, target.right) + 56 + Math.max(sourceIndex, targetIndex) * 24;
+    const laneX = 18 + Math.min(backEdgeIndex, Math.max(0, backEdgeCount - 1)) * BACK_LANE_SPACING;
     return {
       path: roundedPolyline([
-        { x: source.right, y: sourceY },
-        { x: laneX, y: sourceY },
-        { x: laneX, y: targetY },
-        { x: target.right, y: targetY },
+        { x: source.left, y: sourcePortY },
+        { x: source.left - 16, y: sourcePortY },
+        { x: laneX, y: sourcePortY },
+        { x: laneX, y: targetPortY },
+        { x: target.left - 16, y: targetPortY },
+        { x: target.left, y: targetPortY },
       ]),
-      labelX: laneX,
-      labelY: (sourceY + targetY) / 2 - 10,
+      labelX: laneX + BACK_LABEL_OFFSET,
+      labelY: (sourcePortY + targetPortY) / 2 + 4,
     };
   }
 
-  const dx = target.centerX - source.centerX;
-  const dy = targetY - sourceY;
-  const isHorizontal = Math.abs(dx) >= Math.abs(dy);
+  const verticalGap = target.top - source.bottom;
+  const isAdjacentForwardEdge =
+    verticalGap > 24 &&
+    verticalGap <= ROW_GAP + 56 &&
+    adjacentLaneY !== undefined;
 
-  if (isHorizontal) {
-    const movingRight = dx >= 0;
-    const start = {
-      x: movingRight ? source.right : source.left,
-      y: sourceY,
-    };
-    const end = {
-      x: movingRight ? target.left : target.right,
-      y: targetY,
-    };
-    const midpointX = start.x + (end.x - start.x) / 2;
-
+  if (isAdjacentForwardEdge) {
+    const availableGap = Math.max(0, verticalGap - 28);
+    const maxOffset = availableGap / 2;
+    const staggerOffset = ((routeIndex % 5) - 2) * 10;
+    const laneY =
+      adjacentLaneY ??
+      ((source.bottom + target.top) / 2 +
+        Math.max(-maxOffset, Math.min(maxOffset, staggerOffset)));
     return {
       path: roundedPolyline([
-        start,
-        { x: midpointX, y: start.y },
-        { x: midpointX, y: end.y },
-        end,
+        { x: sourcePortX, y: source.bottom },
+        { x: sourcePortX, y: laneY },
+        { x: targetPortX, y: laneY },
+        { x: targetPortX, y: target.top },
       ]),
-      labelX: midpointX,
-      labelY: start.y + (end.y - start.y) / 2 - 10,
+      labelX: (sourcePortX + targetPortX) / 2,
+      labelY: laneY + 4,
     };
   }
 
-  const movingDown = dy >= 0;
-  const start = {
-    x: source.centerX,
-    y: movingDown ? source.bottom : source.top,
-  };
-  const end = {
-    x: target.centerX,
-    y: movingDown ? target.top : target.bottom,
-  };
-  const midpointY = start.y + (end.y - start.y) / 2;
+  const laneX = routeLaneBase + routeIndex * 28;
 
   return {
     path: roundedPolyline([
-      start,
-      { x: start.x, y: midpointY },
-      { x: end.x, y: midpointY },
-      end,
+      { x: sourcePortX, y: source.bottom },
+      { x: sourcePortX, y: sourceStubY },
+      { x: laneX, y: sourceStubY },
+      { x: laneX, y: targetStubY },
+      { x: targetPortX, y: targetStubY },
+      { x: targetPortX, y: target.top },
     ]),
-    labelX: start.x + (end.x - start.x) / 2,
-    labelY: midpointY - 10,
+    labelX: (sourcePortX + laneX) / 2,
+    labelY: sourceStubY + 4,
   };
+}
+
+function transitionLabelWidth(label: string) {
+  return Math.min(320, Math.max(104, label.length * 6.5 + 28));
 }
 
 export function AgentFlowCanvas({
@@ -363,7 +393,8 @@ export function AgentFlowCanvas({
   onMoveNode,
   onSelect,
 }: CanvasProps) {
-  const layout = useMemo(() => buildCanvasLayout(nodes), [nodes]);
+  const layout = useMemo(() => buildCanvasLayout(nodes, edges), [edges, nodes]);
+  const [zoom, setZoom] = useState(1);
   const nodesById = useMemo(
     () => new Map(layout.nodes.map((node) => [node.id, node])),
     [layout.nodes]
@@ -393,6 +424,88 @@ export function AgentFlowCanvas({
     return grouped;
   }, [edges, nodesById]);
 
+  const adjacentLanePositions = useMemo(() => {
+    const candidates: Array<{
+      edge: FlowEdge;
+      preferred: number;
+      min: number;
+      max: number;
+      band: string;
+    }> = [];
+
+    for (const edge of edges) {
+      const source = nodesById.get(edge.sourceId);
+      const target = nodesById.get(edge.targetId);
+      if (!source || !target) {
+        continue;
+      }
+      const verticalGap = target.top - source.bottom;
+      if (verticalGap <= 24 || verticalGap > ROW_GAP + 56) {
+        continue;
+      }
+      candidates.push({
+        edge,
+        preferred: (source.bottom + target.top) / 2,
+        min: source.bottom + 14,
+        max: target.top - 14,
+        band: `${source.bottom}:${target.top}`,
+      });
+    }
+
+    const positions = new Map<string, number>();
+    const usedLanes: number[] = [];
+    const bandCounts = new Map<string, number>();
+    const bandRanges = new Map<string, { min: number; max: number }>();
+    for (const candidate of candidates) {
+      bandCounts.set(candidate.band, (bandCounts.get(candidate.band) ?? 0) + 1);
+      bandRanges.set(candidate.band, { min: candidate.min, max: candidate.max });
+    }
+    const safeCandidates = candidates.filter((candidate) => {
+      const range = bandRanges.get(candidate.band);
+      const count = bandCounts.get(candidate.band) ?? 0;
+      return range && range.max - range.min >= (count - 1) * ADJACENT_LANE_GAP;
+    });
+    const isAvailable = (option: number, candidate: (typeof candidates)[number]) =>
+      option >= candidate.min &&
+      option <= candidate.max &&
+      usedLanes.every((usedLane) => Math.abs(usedLane - option) >= ADJACENT_LANE_GAP);
+
+    for (const candidate of safeCandidates.sort(
+      (left, right) => left.preferred - right.preferred || left.edge.id.localeCompare(right.edge.id)
+    )) {
+      const boundedPreferred = Math.max(candidate.min, Math.min(candidate.max, candidate.preferred));
+      let laneY = boundedPreferred;
+
+      for (let distance = 0; distance <= layout.height; distance += ADJACENT_LANE_GAP) {
+        const options = distance === 0
+          ? [boundedPreferred]
+          : [boundedPreferred - distance, boundedPreferred + distance];
+        const available = options.find((option) => isAvailable(option, candidate));
+        if (available !== undefined) {
+          laneY = available;
+          break;
+        }
+      }
+
+      if (!isAvailable(laneY, candidate)) {
+        continue;
+      }
+
+      usedLanes.push(laneY);
+      positions.set(candidate.edge.id, laneY);
+    }
+    return positions;
+  }, [edges, layout.height, nodesById]);
+
+  const backEdges = useMemo(
+    () => edges.filter((edge) => {
+      const source = nodesById.get(edge.sourceId);
+      const target = nodesById.get(edge.targetId);
+      return source && target && target.centerY < source.centerY - NODE_HEIGHT / 2;
+    }),
+    [edges, nodesById]
+  );
+
   const incomingEdges = useMemo(() => {
     const grouped = new Map<string, FlowEdge[]>();
     for (const edge of edges) {
@@ -415,6 +528,47 @@ export function AgentFlowCanvas({
     return grouped;
   }, [edges, nodesById]);
 
+  const edgeStubPositions = useMemo(() => {
+    const usedPositions: number[] = [];
+    const sourcePositions = new Map<string, number>();
+    const targetPositions = new Map<string, number>();
+
+    function allocatePosition(preferred: number) {
+      for (let distance = 0; distance <= edges.length * 2; distance += 1) {
+        const offsets = distance === 0
+          ? [0]
+          : [distance * ROUTE_STUB_LANE_GAP, -distance * ROUTE_STUB_LANE_GAP];
+        for (const offset of offsets) {
+          const candidate = preferred + offset;
+          if (
+            candidate >= 12 &&
+            usedPositions.every(
+              (position) => Math.abs(position - candidate) >= ROUTE_STUB_LANE_GAP
+            )
+          ) {
+            usedPositions.push(candidate);
+            return candidate;
+          }
+        }
+      }
+      const fallback = Math.max(12, preferred + usedPositions.length * ROUTE_STUB_LANE_GAP);
+      usedPositions.push(fallback);
+      return fallback;
+    }
+
+    for (const edge of edges) {
+      const source = nodesById.get(edge.sourceId);
+      const target = nodesById.get(edge.targetId);
+      if (!source || !target) {
+        continue;
+      }
+      sourcePositions.set(edge.id, allocatePosition(source.bottom + 24));
+      targetPositions.set(edge.id, allocatePosition(target.top - 24));
+    }
+
+    return { source: sourcePositions, target: targetPositions };
+  }, [edges, nodesById]);
+
   useEffect(() => {
     function handlePointerMove(event: PointerEvent) {
       const dragState = dragStateRef.current;
@@ -422,8 +576,8 @@ export function AgentFlowCanvas({
         return;
       }
 
-      const deltaX = event.clientX - dragState.startClientX;
-      const deltaY = event.clientY - dragState.startClientY;
+      const deltaX = (event.clientX - dragState.startClientX) / zoom;
+      const deltaY = (event.clientY - dragState.startClientY) / zoom;
 
       if (!dragState.moved && (Math.abs(deltaX) > 2 || Math.abs(deltaY) > 2)) {
         dragState.moved = true;
@@ -440,34 +594,93 @@ export function AgentFlowCanvas({
       });
     }
 
-    function handlePointerUp() {
+    function clearDragState() {
+      const dragState = dragStateRef.current;
+      if (dragState?.moved) {
+        const draggedId = dragState.id;
+        window.setTimeout(() => {
+          if (suppressClickRef.current === draggedId) {
+            suppressClickRef.current = null;
+          }
+        }, 0);
+      }
       dragStateRef.current = null;
     }
 
     window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointerup", clearDragState);
+    window.addEventListener("pointercancel", clearDragState);
+    window.addEventListener("blur", clearDragState);
 
     return () => {
       window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointerup", clearDragState);
+      window.removeEventListener("pointercancel", clearDragState);
+      window.removeEventListener("blur", clearDragState);
     };
-  }, [onMoveNode]);
+  }, [onMoveNode, zoom]);
 
   return (
-    <div className="relative h-full w-full overflow-auto scrollbar-subtle">
+    <div
+      className="relative min-h-[760px] min-w-full"
+      style={{ minWidth: `${layout.width}px` }}
+    >
+      <div className="sticky right-4 top-4 z-20 ml-auto flex w-fit items-center gap-1 rounded-xl border border-border bg-white/95 p-1 shadow-sm backdrop-blur">
+        <button
+          aria-label="Zoom out"
+          className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-[#6D6D78] transition hover:bg-[#F5F4FF] hover:text-accent disabled:opacity-40"
+          disabled={zoom <= 0.6}
+          onClick={() => setZoom((value) => Math.max(0.6, Number((value - 0.1).toFixed(1))))}
+          type="button"
+        >
+          <ZoomOut size={15} />
+        </button>
+        <span
+          aria-live="polite"
+          className="min-w-12 text-center text-xs font-semibold text-[#6D6D78]"
+          data-testid="flow-zoom-level"
+        >
+          {Math.round(zoom * 100)}%
+        </span>
+        <button
+          aria-label="Zoom in"
+          className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-[#6D6D78] transition hover:bg-[#F5F4FF] hover:text-accent disabled:opacity-40"
+          disabled={zoom >= 1.5}
+          onClick={() => setZoom((value) => Math.min(1.5, Number((value + 0.1).toFixed(1))))}
+          type="button"
+        >
+          <ZoomIn size={15} />
+        </button>
+        <button
+          aria-label="Reset zoom"
+          className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-[#6D6D78] transition hover:bg-[#F5F4FF] hover:text-accent"
+          onClick={() => setZoom(1)}
+          type="button"
+        >
+          <RotateCcw size={14} />
+        </button>
+      </div>
       <div
         className="relative"
         style={{
-          minWidth: `${layout.width}px`,
-          minHeight: `${layout.height}px`,
+          height: `${layout.height * zoom}px`,
+          minWidth: `${layout.width * zoom}px`,
         }}
       >
-        <svg
-          className="pointer-events-none absolute left-0 top-0"
-          height={layout.height}
-          preserveAspectRatio="none"
-          width={layout.width}
+        <div
+          className="absolute left-0 top-0 origin-top-left"
+          style={{
+            height: `${layout.height}px`,
+            transform: `scale(${zoom})`,
+            width: `${layout.width}px`,
+          }}
         >
+          <svg
+            className="pointer-events-none absolute left-0 top-0"
+            height={layout.height}
+            preserveAspectRatio="none"
+            width={layout.width}
+          >
           <defs>
             <marker
               id="state-transition-arrow"
@@ -481,7 +694,7 @@ export function AgentFlowCanvas({
               <path d="M 0 0 L 10 5 L 0 10 z" fill="rgba(102, 89, 255, 0.56)" />
             </marker>
           </defs>
-          {edges.map((edge) => {
+          {edges.map((edge, edgeIndex) => {
             const source = nodesById.get(edge.sourceId);
             const target = nodesById.get(edge.targetId);
 
@@ -491,17 +704,39 @@ export function AgentFlowCanvas({
 
             const sourceEdges = outgoingEdges.get(edge.sourceId) ?? [edge];
             const targetEdges = incomingEdges.get(edge.targetId) ?? [edge];
+            const backEdgeIndex = backEdges.findIndex((item) => item.id === edge.id);
             const route = buildEdgeRoute(
               source,
               target,
               Math.max(sourceEdges.findIndex((item) => item.id === edge.id), 0),
               sourceEdges.length,
               Math.max(targetEdges.findIndex((item) => item.id === edge.id), 0),
-              targetEdges.length
+              targetEdges.length,
+              edgeIndex,
+              layout.routeLaneBase,
+              edgeStubPositions.source.get(edge.id) ?? source.bottom + 24,
+              edgeStubPositions.target.get(edge.id) ?? target.top - 24,
+              Math.max(backEdgeIndex, 0),
+              backEdges.length,
+              adjacentLanePositions.get(edge.id)
             );
 
             return (
-              <g key={edge.id}>
+              <g
+                aria-label={`${edge.label}${edge.condition ? `. ${edge.condition}` : ""}`}
+                data-edge-id={edge.id}
+                key={edge.id}
+                role="group"
+              >
+                <title>{edge.condition ? `${edge.label}: ${edge.condition}` : edge.label}</title>
+                <path
+                  d={route.path}
+                  fill="none"
+                  stroke="#FFFFFF"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="9"
+                />
                 <path
                   d={route.path}
                   fill="none"
@@ -518,8 +753,8 @@ export function AgentFlowCanvas({
                       height="26"
                       rx="13"
                       stroke="rgba(102,89,255,0.12)"
-                      width="108"
-                      x={route.labelX - 54}
+                      width={transitionLabelWidth(edge.label)}
+                      x={route.labelX - transitionLabelWidth(edge.label) / 2}
                       y={route.labelY - 16}
                     />
                     <text
@@ -537,57 +772,61 @@ export function AgentFlowCanvas({
               </g>
             );
           })}
-        </svg>
+          </svg>
 
-        {layout.nodes.map((node) => (
-          <button
-            key={node.id}
-            className={cn(
-              "absolute w-[220px] cursor-grab rounded-2xl border bg-white p-4 text-left shadow-sm transition active:cursor-grabbing",
-              node.nodeType === "end_call"
-                ? "border-[rgba(217,119,6,0.3)] bg-[rgba(217,119,6,0.06)]"
-                : selectedId === node.id
-                ? "border-[rgba(102,89,255,0.35)] bg-[rgba(102,89,255,0.08)] shadow-surface"
-                : "border-border hover:border-[rgba(102,89,255,0.2)]"
-            )}
-            onClick={(event) => {
-              if (suppressClickRef.current === node.id) {
-                suppressClickRef.current = null;
-                event.preventDefault();
-                return;
-              }
-              onSelect(node.id);
-            }}
-            onPointerDown={(event) => {
-              if (event.button !== 0) {
-                return;
-              }
-              onSelect(node.id);
-              dragStateRef.current = {
-                id: node.id,
-                startClientX: event.clientX,
-                startClientY: event.clientY,
-                startNodeX: node.x,
-                startNodeY: node.y,
-                moved: false,
-              };
-            }}
-            style={{ left: node.left, top: node.top }}
-            type="button"
-          >
-            <p className="text-xs uppercase tracking-[0.16em] text-[#6D6D78]">
-              {node.nodeType === "end_call"
-                ? "Terminal"
-                : node.id === "router"
-                  ? "Router"
-                  : node.id === "escalation"
-                    ? "Human handoff"
-                    : "Workflow step"}
-            </p>
-            <h3 className="mt-2 text-base font-semibold">{node.label}</h3>
-            <p className="mt-3 text-sm text-[#6D6D78]">{node.state}</p>
-          </button>
-        ))}
+          {layout.nodes.map((node) => (
+            <button
+              key={node.id}
+              className={cn(
+                "absolute w-[220px] cursor-grab rounded-2xl border bg-white p-4 text-left shadow-sm transition active:cursor-grabbing",
+                node.nodeType === "end_call"
+                  ? "border-[rgba(217,119,6,0.3)] bg-[rgba(217,119,6,0.06)]"
+                  : selectedId === node.id
+                  ? "border-[rgba(102,89,255,0.35)] bg-[rgba(102,89,255,0.08)] shadow-surface"
+                  : "border-border hover:border-[rgba(102,89,255,0.2)]"
+              )}
+              onClick={(event) => {
+                if (suppressClickRef.current === node.id) {
+                  suppressClickRef.current = null;
+                  event.preventDefault();
+                  return;
+                }
+                if (event.detail === 0) {
+                  onSelect(node.id);
+                }
+              }}
+              aria-pressed={selectedId === node.id}
+              onPointerDown={(event) => {
+                if (event.button !== 0) {
+                  return;
+                }
+                onSelect(node.id);
+                dragStateRef.current = {
+                  id: node.id,
+                  startClientX: event.clientX,
+                  startClientY: event.clientY,
+                  startNodeX: node.x,
+                  startNodeY: node.y,
+                  moved: false,
+                };
+              }}
+              style={{ left: node.left, top: node.top }}
+              type="button"
+            >
+              <p className="text-xs uppercase tracking-[0.16em] text-[#6D6D78]">
+                {node.nodeType === "end_call"
+                  ? "Terminal"
+                  : node.id === "router"
+                    ? "Router"
+                    : node.id === "escalation"
+                      ? "Human handoff"
+                      : "Workflow step"}
+              </p>
+              <h3 className="mt-2 text-base font-semibold">{node.label}</h3>
+              <p className="mt-3 text-sm text-[#6D6D78]">{node.state}</p>
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );

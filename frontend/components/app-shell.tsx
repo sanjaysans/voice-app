@@ -26,7 +26,7 @@ import { useApiActivity } from "@/lib/api-activity";
 import { useMockApp } from "@/lib/mock-app";
 import { useAsyncAction } from "@/lib/use-async-action";
 import { cn } from "@/lib/utils";
-import { Badge, Button, ConfirmActionModal, Select } from "@/components/ui";
+import { Badge, Button, ConfirmActionModal, Select, SurfaceLoader } from "@/components/ui";
 
 type NavItem = {
   href: string;
@@ -43,7 +43,7 @@ const navSections = [
       { href: "/calls/logs", label: "Call logs", icon: ScrollText },
       { href: "/live", label: "Live", icon: Radio },
       { href: "/evaluations", label: "Evaluations", icon: Shield },
-      { href: "/calls", label: "Calls", icon: Phone, soon: true },
+      { href: "/calls", label: "Calls", icon: Phone },
       { href: "/qa-review", label: "QA review", icon: Shield, soon: true },
       { href: "/analytics", label: "Analytics", icon: LineChart, soon: true }
     ] satisfies NavItem[]
@@ -64,25 +64,16 @@ const navSections = [
       { href: "/connections", label: "Connections", icon: Cable },
       { href: "/team", label: "Team", icon: Users },
       { href: "/workspaces", label: "Workspaces", icon: FolderKanban },
-      { href: "/webhooks", label: "Webhooks", icon: Webhook, soon: true },
-      { href: "/secrets", label: "Secrets", icon: KeyRound, soon: true },
+      { href: "/webhooks", label: "Webhooks", icon: Webhook },
+      { href: "/secrets", label: "Secrets", icon: KeyRound },
       { href: "/compliance", label: "Compliance", icon: Shield, soon: true }
     ] satisfies NavItem[]
   }
 ];
 
 function NavLink({ item, active }: { item: NavItem; active: boolean }) {
-  return (
-    <Link
-      className={cn(
-        "flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-medium transition",
-        active
-          ? "bg-[rgba(102,89,255,0.18)] text-white"
-          : "text-[rgba(255,255,255,0.7)] hover:bg-[rgba(255,255,255,0.04)] hover:text-white"
-      )}
-      href={item.href}
-      prefetch={false}
-    >
+  const content = (
+    <>
       <item.icon size={18} className={active ? "text-accent-soft" : undefined} />
       <span className="min-w-0 flex-1 truncate">{item.label}</span>
       {item.soon ? (
@@ -97,6 +88,26 @@ function NavLink({ item, active }: { item: NavItem; active: boolean }) {
           Soon
         </span>
       ) : null}
+    </>
+  );
+  const className = cn(
+    "flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-medium transition",
+    active
+      ? "bg-[rgba(102,89,255,0.18)] text-white"
+      : "text-[rgba(255,255,255,0.7)] hover:bg-[rgba(255,255,255,0.04)] hover:text-white",
+    item.soon && "cursor-not-allowed opacity-70"
+  );
+
+  if (item.soon) {
+    return <div aria-disabled="true" className={className} title="This surface is on the roadmap">{content}</div>;
+  }
+
+  return (
+    <Link
+      className={className}
+      href={item.href}
+    >
+      {content}
     </Link>
   );
 }
@@ -108,11 +119,38 @@ function isNavItemActive(pathname: string, href: string) {
   return pathname === href;
 }
 
+function MobileNavLink({ item, active }: { item: NavItem; active: boolean }) {
+  const className = cn(
+    "inline-flex items-center gap-2 whitespace-nowrap rounded-xl px-3 py-2 text-sm font-medium transition",
+    active ? "bg-[rgba(102,89,255,0.12)] text-accent" : "bg-white text-[#6D6D78]",
+    item.soon && "cursor-not-allowed opacity-60"
+  );
+  const content = (
+    <>
+      {item.label}
+      {item.soon ? (
+        <span className="rounded-full bg-[#F1F0FF] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-accent">
+          Soon
+        </span>
+      ) : null}
+    </>
+  );
+
+  return item.soon ? (
+    <span aria-disabled="true" className={className} title="This surface is on the roadmap">{content}</span>
+  ) : (
+    <Link className={className} href={item.href}>{content}</Link>
+  );
+}
+
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname() ?? "";
   const {
     currentUser,
     notifications,
+    isRouteDataLoading,
+    routeDataError,
+    retryRouteData,
     signOut,
     workspaceId,
     workspaceName,
@@ -121,6 +159,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   } = useMockApp();
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState("");
   const [isLogoutOpen, setIsLogoutOpen] = useState(false);
+  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const workspaceSwitch = useAsyncAction();
   const signOutAction = useAsyncAction();
   const { isLoading: isApiLoading } = useApiActivity();
@@ -219,16 +258,34 @@ export function AppShell({ children }: { children: ReactNode }) {
                     void workspaceSwitch.run(() => handleWorkspaceChange(event.target.value))
                   }
                 />
+                <div className="relative">
+                  <button
+                    aria-expanded={isNotificationsOpen}
+                    aria-haspopup="dialog"
+                    aria-label={`Notifications${notifications.length ? `, ${notifications.length} unread` : ""}`}
+                    className="relative inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-border bg-white text-[#6D6D78] transition hover:text-[#17171F]"
+                    onClick={() => setIsNotificationsOpen((current) => !current)}
+                    type="button"
+                  >
+                    <Bell size={18} />
+                    <span className="absolute -right-1 top-1 inline-flex min-w-5 -translate-y-1/2 items-center justify-center rounded-full border-2 border-[rgba(247,247,249,0.94)] bg-accent px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white">
+                      {notifications.length}
+                    </span>
+                  </button>
+                  {isNotificationsOpen ? (
+                    <div className="absolute right-0 top-14 z-40 w-80 rounded-2xl border border-border bg-surface p-3 shadow-surface" role="dialog" aria-label="Notifications">
+                      <p className="px-2 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-muted">Notifications</p>
+                      {notifications.length ? notifications.map((notification) => (
+                        <Link key={notification.id} className="block rounded-xl px-2 py-3 hover:bg-surface-subtle" href={notification.href} onClick={() => setIsNotificationsOpen(false)}>
+                          <p className="text-sm font-medium text-text">{notification.title}</p>
+                          <p className="mt-1 text-xs leading-5 text-muted">{notification.message}</p>
+                        </Link>
+                      )) : <p className="px-2 py-3 text-sm text-muted">You're all caught up.</p>}
+                    </div>
+                  ) : null}
+                </div>
                 <button
-                  className="relative inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-border bg-white text-[#6D6D78] transition hover:text-[#17171F]"
-                  type="button"
-                >
-                  <Bell size={18} />
-                  <span className="absolute -right-1 top-1 inline-flex min-w-5 -translate-y-1/2 items-center justify-center rounded-full border-2 border-[rgba(247,247,249,0.94)] bg-accent px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white">
-                    {notifications.length}
-                  </span>
-                </button>
-                <button
+                  aria-label="Sign out"
                   className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-border bg-white text-[#6D6D78] transition hover:text-[#17171F] disabled:pointer-events-none disabled:opacity-60"
                   disabled={signOutAction.isPending}
                   onClick={() => setIsLogoutOpen(true)}
@@ -253,31 +310,25 @@ export function AppShell({ children }: { children: ReactNode }) {
               {navSections.flatMap((section) => section.items).map((item) => {
                 const active = isNavItemActive(pathname, item.href);
                 return (
-                  <Link
-                    key={item.href}
-                    className={cn(
-                      "inline-flex items-center gap-2 whitespace-nowrap rounded-xl px-3 py-2 text-sm font-medium transition",
-                      active
-                        ? "bg-[rgba(102,89,255,0.12)] text-accent"
-                        : "bg-white text-[#6D6D78]"
-                    )}
-                    href={item.href}
-                    prefetch={false}
-                  >
-                    {item.label}
-                    {item.soon ? (
-                      <span className="rounded-full bg-[#F1F0FF] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-accent">
-                        Soon
-                      </span>
-                    ) : null}
-                  </Link>
+                  <MobileNavLink key={item.href} item={item} active={active} />
                 );
               })}
             </div>
           </div>
         </header>
 
-        <main className="px-6 py-6 lg:px-8">{children}</main>
+        <main className="relative min-h-[calc(100vh-96px)] px-6 py-6 lg:px-8">
+          {routeDataError ? (
+            <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-danger/20 bg-danger/10 px-4 py-3 text-sm text-danger" role="alert">
+              <span>{routeDataError}</span>
+              <Button size="sm" variant="secondary" onClick={() => void retryRouteData()}>
+                Retry
+              </Button>
+            </div>
+          ) : null}
+          {children}
+          {isRouteDataLoading ? <SurfaceLoader message="Refreshing this surface" /> : null}
+        </main>
 
         <ConfirmActionModal
           title="Sign out"

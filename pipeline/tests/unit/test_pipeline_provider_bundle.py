@@ -18,6 +18,15 @@ def test_build_provider_bundle_constructs_flux_stack() -> None:
     assert type(bundle.room_options).__name__ == "RoomOptions"
     assert bundle.turn_handling["turn_detection"] == "stt"
     assert bundle.turn_handling["interruption"]["mode"] == "vad"
+    assert bundle.stt._opts.eager_eot_threshold == 0.35
+    assert bundle.stt._opts.eot_threshold == 0.6
+    assert bundle.stt._opts.eot_timeout_ms == 800
+    assert bundle.llm._opts.service_tier == "default"
+    assert bundle.stt.capabilities.streaming is True
+    assert bundle.llm._opts.use_websocket is True
+    assert bundle.tts.capabilities.streaming is True
+    assert bundle.tts._stream_pacer is None
+    assert bundle.room_options.delete_room_on_close is True
 
 
 def test_build_provider_bundle_constructs_nova_stack() -> None:

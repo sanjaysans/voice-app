@@ -21,6 +21,11 @@ def test_password_hash_round_trip() -> None:
     assert verify_password("wrong-password", hashed) is False
 
 
+def test_malformed_password_hash_is_an_authentication_failure() -> None:
+    assert verify_password("voice-demo-password", "pbkdf2_sha256$not-a-number$$") is False
+    assert verify_password("voice-demo-password", "pbkdf2_sha256$0$YWJj$YWJj") is False
+
+
 def test_session_token_round_trip() -> None:
     token = create_session_token(
         user_id=uuid.UUID("00000000-0000-0000-0000-000000000001"),

@@ -93,20 +93,84 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("VOICE_PIPELINE_PREFER_SERVER_VAD"),
     )
     endpointing_ms: int = Field(
-        default=700,
+        default=600,
+        ge=0,
+        le=60000,
         validation_alias=AliasChoices("VOICE_PIPELINE_ENDPOINTING_MS"),
     )
     min_endpointing_ms: int = Field(
-        default=300,
+        default=600,
+        ge=0,
+        le=60000,
         validation_alias=AliasChoices("VOICE_PIPELINE_MIN_ENDPOINTING_MS"),
     )
     max_endpointing_ms: int = Field(
-        default=1500,
+        default=600,
+        ge=0,
+        le=1200,
         validation_alias=AliasChoices("VOICE_PIPELINE_MAX_ENDPOINTING_MS"),
+    )
+    endpointing_mode: Literal["fixed", "dynamic"] = Field(
+        default="fixed",
+        validation_alias=AliasChoices("VOICE_PIPELINE_ENDPOINTING_MODE"),
+    )
+    endpointing_alpha: float = Field(
+        default=0.8,
+        ge=0.0,
+        le=1.0,
+        validation_alias=AliasChoices("VOICE_PIPELINE_ENDPOINTING_ALPHA"),
+    )
+    interruption_mode: Literal["adaptive", "vad"] = Field(
+        default="vad",
+        validation_alias=AliasChoices("VOICE_PIPELINE_INTERRUPTION_MODE"),
+    )
+    min_interruption_duration_ms: int = Field(
+        default=350,
+        ge=0,
+        le=5000,
+        validation_alias=AliasChoices("VOICE_PIPELINE_MIN_INTERRUPTION_DURATION_MS"),
+    )
+    min_interruption_words: int = Field(
+        default=1,
+        ge=0,
+        le=10,
+        validation_alias=AliasChoices("VOICE_PIPELINE_MIN_INTERRUPTION_WORDS"),
+    )
+    false_interruption_timeout_ms: int = Field(
+        default=1200,
+        ge=0,
+        le=10000,
+        validation_alias=AliasChoices("VOICE_PIPELINE_FALSE_INTERRUPTION_TIMEOUT_MS"),
+    )
+    backchannel_boundary_ms: int = Field(
+        default=500,
+        ge=0,
+        le=5000,
+        validation_alias=AliasChoices("VOICE_PIPELINE_BACKCHANNEL_BOUNDARY_MS"),
     )
     false_interruption_recovery: bool = Field(
         default=True,
         validation_alias=AliasChoices("VOICE_PIPELINE_FALSE_INTERRUPTION_RECOVERY"),
+    )
+    preemptive_generation: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("VOICE_PIPELINE_PREEMPTIVE_GENERATION"),
+    )
+    preemptive_tts: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("VOICE_PIPELINE_PREEMPTIVE_TTS"),
+    )
+    preemptive_max_speech_duration_ms: int = Field(
+        default=10000,
+        ge=0,
+        le=60000,
+        validation_alias=AliasChoices("VOICE_PIPELINE_PREEMPTIVE_MAX_SPEECH_DURATION_MS"),
+    )
+    preemptive_max_retries: int = Field(
+        default=1,
+        ge=0,
+        le=10,
+        validation_alias=AliasChoices("VOICE_PIPELINE_PREEMPTIVE_MAX_RETRIES"),
     )
     interruption_sensitivity: str = Field(
         default="balanced",
@@ -156,10 +220,17 @@ class Settings(BaseSettings):
                 raise ValueError("VOICE_SECRET_ENCRYPTION_KEY must be configured for production")
             object.__setattr__(self, "secret_encryption_key", "voice-local-dev-encryption-key")
 
-        if self.min_endpointing_ms > self.endpointing_ms:
-            raise ValueError("VOICE_PIPELINE_MIN_ENDPOINTING_MS cannot exceed endpointing_ms")
-        if self.endpointing_ms > self.max_endpointing_ms:
-            raise ValueError("VOICE_PIPELINE_ENDPOINTING_MS cannot exceed max_endpointing_ms")
+        if self.endpointing_mode == "fixed":
+            if self.min_endpointing_ms > self.endpointing_ms:
+                raise ValueError("VOICE_PIPELINE_MIN_ENDPOINTING_MS cannot exceed endpointing_ms")
+            if self.endpointing_ms > self.max_endpointing_ms:
+                raise ValueError("VOICE_PIPELINE_ENDPOINTING_MS cannot exceed max_endpointing_ms")
+        elif self.min_endpointing_ms > self.max_endpointing_ms:
+            raise ValueError("VOICE_PIPELINE_MIN_ENDPOINTING_MS cannot exceed max_endpointing_ms")
+        if self.backchannel_boundary_ms > self.max_endpointing_ms:
+            raise ValueError(
+                "VOICE_PIPELINE_BACKCHANNEL_BOUNDARY_MS cannot exceed max_endpointing_ms"
+            )
         if self.livekit_startup_mode in {"connect", "dispatch"} and self.livekit_url is None:
             raise ValueError("VOICE_LIVEKIT_URL must be configured for connect or dispatch mode")
         if self.livekit_startup_mode == "dispatch":

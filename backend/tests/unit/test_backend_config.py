@@ -64,5 +64,5 @@ def test_dev_environment_defaults_livekit_to_local_server() -> None:
 
     assert settings.livekit_url == "ws://127.0.0.1:7880"
     assert settings.livekit_api_key == "devkey"
-    assert settings.livekit_api_secret == "secret"
+    assert settings.livekit_api_secret == "voice-local-dev-livekit-secret-32"
     assert settings.livekit_configured is True

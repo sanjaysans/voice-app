@@ -368,6 +368,8 @@ def _caller_system_prompt(
             f"Configured caller instructions: {json.dumps(caller_config, ensure_ascii=True)}",
             f"If a turn script exists, follow it in order: {turn_instructions}",
             "Answer the production agent's questions using only the scenario context.",
+            "Wait for the production agent to finish each turn unless this case explicitly tests an interruption.",
+            "For an interruption case, use a short, natural correction or objection and yield once the agent acknowledges you.",
             "When the agent reaches a clear conclusion or closing, call finish_eval_case.",
             "Do not invent tools, bookings, or facts that are not in the scenario.",
         ]

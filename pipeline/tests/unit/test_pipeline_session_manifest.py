@@ -28,7 +28,9 @@ def test_build_session_manifest_returns_dispatch_metadata() -> None:
     assert manifest["session"]["room_name"] == "voice-browser-room"
     assert manifest["dispatch_agent_name"] == "voice-router-agent"
     assert manifest["runtime"]["transport"] == "livekit"
-    assert json.loads(manifest["dispatch_metadata"])["stt"]["api_key"] == "dg-key"
+    encrypted_metadata = json.loads(manifest["dispatch_metadata"])
+    assert encrypted_metadata["encoding"] == "voice-runtime-fernet-v1"
+    assert "api_key" not in manifest["dispatch_metadata"]
 
 
 def test_parse_session_request_metadata_round_trips_secrets() -> None:

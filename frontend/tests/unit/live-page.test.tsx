@@ -8,6 +8,10 @@ import { buildDefaultRuntimeProfile } from "@/lib/voice-stack";
 const mockUseMockApp = vi.fn();
 const mockCreateBrowserRtcSession = vi.fn();
 const mockUpdateLiveTestSession = vi.fn();
+let latestRoom: {
+  handlers: Record<string, Array<(...args: unknown[]) => void>>;
+  remoteParticipants: Map<string, unknown>;
+} | null = null;
 
 vi.mock("@/lib/mock-app", () => ({
   useMockApp: () => mockUseMockApp(),
@@ -21,11 +25,16 @@ vi.mock("@/lib/live-session", () => ({
 vi.mock("livekit-client", () => ({
   Room: class {
     handlers: Record<string, Array<(...args: unknown[]) => void>> = {};
+    remoteParticipants = new Map();
 
     localParticipant = {
       identity: "web-user-1",
       setMicrophoneEnabled: vi.fn(async () => undefined),
     };
+
+    constructor() {
+      latestRoom = this;
+    }
 
     on(event: string, handler: (...args: unknown[]) => void) {
       this.handlers[event] = [...(this.handlers[event] || []), handler];
@@ -40,6 +49,10 @@ vi.mock("livekit-client", () => ({
     async disconnect() {
       return undefined;
     }
+
+    async startAudio() {
+      return undefined;
+    }
   },
   RoomEvent: {
     Connected: "connected",
@@ -48,6 +61,11 @@ vi.mock("livekit-client", () => ({
     TrackSubscribed: "trackSubscribed",
     TrackUnsubscribed: "trackUnsubscribed",
     TranscriptionReceived: "transcriptionReceived",
+    Reconnecting: "reconnecting",
+    Reconnected: "reconnected",
+    AudioPlaybackStatusChanged: "audioPlaybackChanged",
+    MediaDevicesError: "mediaDevicesError",
+    DataReceived: "dataReceived",
   },
   Track: {
     Kind: {
@@ -138,6 +156,7 @@ describe("LivePage", () => {
   beforeEach(() => {
     mockCreateBrowserRtcSession.mockReset();
     mockUpdateLiveTestSession.mockReset();
+    latestRoom = null;
     mockUpdateLiveTestSession.mockResolvedValue({
       call_id: "call-test-1",
       agent_id: "agent-1",
@@ -230,5 +249,116 @@ describe("LivePage", () => {
     });
 
     expect(screen.getByText("Persisted as a test call")).toBeInTheDocument();
+  });
+
+  it("finalizes a session when LiveKit disconnects unexpectedly", async () => {
+    const user = userEvent.setup();
+    mockCreateBrowserRtcSession.mockResolvedValue({
+      call_id: "call-test-1",
+      room_name: "voice-room-local",
+      participant_identity: "web-user-1",
+      participant_name: "Voice Admin",
+      server_url: "ws://127.0.0.1:7880",
+      access_token: "jwt-token",
+      dispatch_id: "dispatch-123",
+      dispatch_agent_name: "lead-router",
+      session: {},
+      runtime: {},
+      warnings: [],
+      errors: [],
+    });
+
+    render(<LivePage />);
+    await user.click(screen.getAllByRole("button", { name: "Join live room" })[0] as HTMLElement);
+    await waitFor(() => expect(latestRoom).not.toBeNull());
+
+    latestRoom?.handlers.disconnected?.forEach((handler) => handler());
+
+    await waitFor(() => {
+      expect(mockUpdateLiveTestSession).toHaveBeenCalledWith(
+        "voice-demo",
+        "workspace-1",
+        "call-test-1",
+        expect.objectContaining({ lifecycle_status: "cancelled" })
+      );
+    });
+  });
+
+  it("stops the microphone and exits the live view immediately when ending a call", async () => {
+    const user = userEvent.setup();
+    mockCreateBrowserRtcSession.mockResolvedValue({
+      call_id: "call-test-1",
+      room_name: "voice-room-local",
+      participant_identity: "web-user-1",
+      participant_name: "Voice Admin",
+      server_url: "ws://127.0.0.1:7880",
+      access_token: "jwt-token",
+      dispatch_id: "dispatch-123",
+      dispatch_agent_name: "lead-router",
+      session: {},
+      runtime: {},
+      warnings: [],
+      errors: [],
+    });
+
+    render(<LivePage />);
+    await user.click(screen.getAllByRole("button", { name: "Join live room" })[0] as HTMLElement);
+    await waitFor(() => expect(latestRoom).not.toBeNull());
+
+    await user.click(screen.getByRole("button", { name: "End call" }));
+
+    expect(await screen.findByText("Start a browser live test")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(mockUpdateLiveTestSession).toHaveBeenCalledWith(
+        "voice-demo",
+        "workspace-1",
+        "call-test-1",
+        expect.objectContaining({ lifecycle_status: "completed" })
+      );
+    });
+  });
+
+  it("renders worker runtime metrics received over the LiveKit data channel", async () => {
+    const user = userEvent.setup();
+    mockCreateBrowserRtcSession.mockResolvedValue({
+      call_id: "call-test-1",
+      room_name: "voice-room-local",
+      participant_identity: "web-user-1",
+      participant_name: "Voice Admin",
+      server_url: "ws://127.0.0.1:7880",
+      access_token: "jwt-token",
+      dispatch_id: "dispatch-123",
+      dispatch_agent_name: "lead-router",
+      session: {},
+      runtime: {},
+      warnings: [],
+      errors: [],
+    });
+
+    render(<LivePage />);
+    await user.click(screen.getAllByRole("button", { name: "Join live room" })[0] as HTMLElement);
+    await waitFor(() => expect(latestRoom).not.toBeNull());
+
+    latestRoom?.handlers.dataReceived?.forEach((handler) =>
+      handler(
+        new TextEncoder().encode(
+          JSON.stringify({
+            event_type: "turn.metrics",
+            metric_type: "llm_metrics",
+            label: "openai.responses",
+            ttft: 0.22,
+            prompt_tokens: 120,
+          })
+        ),
+        { identity: "agent-1" },
+        undefined,
+        "voice_runtime"
+      )
+    );
+
+    expect(await screen.findByText("Pipeline metrics")).toBeInTheDocument();
+    expect(screen.getByText("0.22s")).toBeInTheDocument();
+    expect(screen.getByText("Worker")).toBeInTheDocument();
+    expect(screen.getByText("openai.responses timing recorded")).toBeInTheDocument();
   });
 });

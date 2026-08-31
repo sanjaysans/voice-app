@@ -11,6 +11,7 @@ import {
   getProviderDefinition,
   getProviderLabel,
   getProviderOptions,
+  pickConnectionConfig,
   parsePhoneNumbers,
   summarizeConnection,
   type SupportedProviderKind,
@@ -96,21 +97,14 @@ export default function ConnectionsPage() {
     const label =
       String(config.display_name || "").trim() ||
       `${getProviderLabel(providerKind, vendorName)} ${providerKind.toUpperCase()}`;
+    setIsOpen(false);
     await addConnection({
       providerKind,
       vendorName,
       label,
-      status: "active",
-      config: {
-        ...config,
-        kind: providerKind,
-        display_name: label,
-        ui_status: "Connected",
-        detail: `${label} is configured and ready for agent setup.`,
-        last_checked: "Configured now"
-      }
+      status: "draft",
+      config: pickConnectionConfig(providerKind, vendorName, { ...config, display_name: label })
     });
-    setIsOpen(false);
     resetComposer();
   }
 
@@ -125,14 +119,7 @@ export default function ConnectionsPage() {
       vendorName,
       label,
       status: "draft",
-      config: {
-        ...config,
-        kind: providerKind,
-        display_name: label,
-        ui_status: "Pending",
-        detail: `${label} was updated. Run health check again to verify the latest credentials and setup.`,
-        last_checked: "Pending verification"
-      }
+      config: pickConnectionConfig(providerKind, vendorName, { ...config, display_name: label })
     });
     setEditingId(null);
     resetComposer();

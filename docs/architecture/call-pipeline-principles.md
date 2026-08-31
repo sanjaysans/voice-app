@@ -34,6 +34,73 @@ The platform should support these modes through one internal contract:
 - interruption policy
 - false interruption recovery policy
 
+The v1 LiveKit turn policy uses a layered strategy rather than a single threshold:
+
+1. Deepgram streaming endpoint signals provide the primary user-turn boundary.
+2. Dynamic endpointing adapts the pause window between configured minimum and maximum delays.
+3. Local VAD is the default interruption path for predictable response latency. LiveKit adaptive
+   interruption detection remains available as an explicit opt-in when a deployment needs stronger
+   barge-in classification.
+4. Minimum interruption duration and word gates suppress short noise and acknowledgements.
+5. False interruptions resume the paused agent after a bounded silence timeout.
+6. Preemptive LLM generation reduces response latency, while preemptive TTS stays disabled by
+   default so an early interruption does not waste audio generation.
+7. Browser live sessions use the turn-aware Deepgram Flux websocket stream. Legacy Nova profiles
+   are upgraded at the browser boundary and receive an 800 ms utterance boundary so an old saved
+   profile cannot silently reintroduce buffered turn detection.
+8. The LLM uses the OpenAI Responses websocket and Cartesia uses its pooled websocket stream with
+   sentence pacing disabled. Provider metrics must expose whether streaming is active.
+
+The browser voice path has a two-second response-start target. Its default budget is a 350 ms VAD
+silence window, an 800 ms Deepgram Flux end-of-turn timeout, a 250-1200 ms LiveKit endpointing
+window, and a bounded 240-token voice response. These are latency guardrails rather than a promise
+that an external provider can never exceed the target. The worker emits redacted structured timing
+events for EOU, STT, LLM first-token, and TTS first-byte measurements so provider or network
+regressions can be isolated from turn-taking delay.
+
+## Latency diagnosis
+
+The live console records end-of-turn, transcript finalization, LLM first-token, TTS first-audio,
+and response-start timings. A slow turn should be diagnosed in this order:
+
+1. Transcript finalization or end-of-turn above the configured budget means the STT stream or turn
+   boundary is the bottleneck.
+2. LLM first-token above the budget means prompt size, model selection, provider queueing, or a
+   websocket reconnect is the bottleneck.
+3. Multiple LLM timings for one speech ID indicate tool follow-up generation; keep tool prompts
+   short and avoid transitions that do not change the workflow state.
+4. TTS first-audio above the budget means the streaming TTS connection is not warm or is buffering
+   text before synthesis.
+
+The worker publishes a redacted `transport.streaming_ready` event and the measured response-start
+metric to the browser over the `voice_runtime` room topic. VAD heartbeat metrics remain visible in
+memory but are not persisted individually, preventing observability writes from adding database
+traffic to an active call.
+
+Endpointing has two explicit modes. `fixed` applies `endpointing_ms` as the exact post-speech
+pause. `dynamic` uses `min_endpointing_ms`, `max_endpointing_ms`, and `endpointing_alpha` so the
+runtime can adapt the pause from recent turn history; `endpointing_ms` remains the fixed-mode
+value and is not silently treated as a dynamic target. Interruption sensitivity is a preset for
+the default gates: low requires a longer utterance and two words, balanced uses the standard
+threshold, and high accepts a shorter, single-word barge-in. Explicit non-default duration or word
+values override the preset.
+
+Every layer is controlled by the canonical `TurnPolicy` and is applied identically to the
+production worker and provider-backed evaluation caller. State changes, overlap decisions, and
+false-interruption recovery are logged as structured runtime events. The policy is configurable
+through `VOICE_PIPELINE_*` environment variables and must be tuned from call evidence, not by
+silently weakening evaluation assertions.
+
+Provider-backed evaluation callers convert caller-side TTS or runtime failures into an explicit
+`caller_runtime_error` outcome and evidence record. They must not silently wait until the case
+timeout, because that obscures whether a failure came from turn-taking or the evaluator runtime.
+
+Session teardown is bounded and uses the LiveKit async close contract. Speech playout, runtime
+event publication, and session close must not hold a call open indefinitely; cancellation paths
+must await their tasks and log failures. Live evaluation suites should include intentional
+barge-in, short backchannel, false-interruption recovery, and terminal-overlap cases in addition
+to business-flow assertions.
+
 ### Reasoning layer
 
 - single-agent execution

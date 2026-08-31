@@ -27,13 +27,23 @@ def inspection_schema(database_url: str) -> str | None:
 
 
 def configure_engine(engine, database_url: str) -> None:
+    """Configure search_path once for each physical database connection.
+
+    The pool checkout hook used previously repeated this round trip for every
+    request. A connect hook preserves the schema isolation while only running
+    when SQLAlchemy opens a new physical connection.
+    """
     if not database_url.startswith("postgresql"):
         return
 
-    @event.listens_for(engine, "checkout")
-    def _set_search_path(dbapi_connection, _connection_record, _connection_proxy) -> None:
+    @event.listens_for(engine, "connect")
+    def _set_search_path(dbapi_connection, _connection_record) -> None:
+        previous_autocommit = dbapi_connection.autocommit
         cursor = dbapi_connection.cursor()
         try:
+            # Keep the session setting after SQLAlchemy rolls back a request.
+            dbapi_connection.autocommit = True
             cursor.execute(f"SET search_path TO {POSTGRES_SEARCH_PATH}")
         finally:
             cursor.close()
+            dbapi_connection.autocommit = previous_autocommit

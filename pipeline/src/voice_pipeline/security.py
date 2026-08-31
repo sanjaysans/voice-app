@@ -28,3 +28,11 @@ def decrypt_runtime_metadata(metadata: str, settings: Settings | None = None) ->
         return metadata
     ciphertext = str(payload.get("ciphertext", ""))
     return _build_fernet(settings).decrypt(ciphertext.encode("utf-8")).decode("utf-8")
+
+
+def encrypt_runtime_metadata(metadata: str, settings: Settings | None = None) -> str:
+    payload = {
+        "encoding": RUNTIME_METADATA_ENCODING,
+        "ciphertext": _build_fernet(settings).encrypt(metadata.encode("utf-8")).decode("utf-8"),
+    }
+    return json.dumps(payload)

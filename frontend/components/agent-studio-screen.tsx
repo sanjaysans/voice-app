@@ -19,6 +19,7 @@ import {
   Modal,
   PageHeader,
   Select,
+  Tabs,
   Textarea,
 } from "@/components/ui";
 import {
@@ -36,13 +37,13 @@ import {
 } from "@/lib/voice-stack";
 
 const editorTabs = [
-  { id: "overview", label: "Overview" },
-  { id: "workflow", label: "Workflow" },
-  { id: "telephony", label: "Telephony" },
-  { id: "stt", label: "STT" },
-  { id: "llm", label: "LLM" },
-  { id: "tts", label: "TTS" },
-  { id: "states", label: "States" },
+  { id: "overview", label: "Overview", description: "Identity and goal" },
+  { id: "workflow", label: "Workflow", description: "Prompts and variables" },
+  { id: "telephony", label: "Telephony", description: "Call transport" },
+  { id: "stt", label: "STT", description: "Speech recognition" },
+  { id: "llm", label: "LLM", description: "Reasoning model" },
+  { id: "tts", label: "TTS", description: "Voice synthesis" },
+  { id: "states", label: "States", description: "Conversation map" },
 ] as const;
 
 type EditorTab = (typeof editorTabs)[number]["id"];
@@ -695,22 +696,12 @@ export function AgentStudioScreen({ agentId }: { agentId?: string }) {
           <p className="text-sm text-[#6D6D78]">Draft changes stay local until you save.</p>
         </div>
 
-        <div className="flex flex-wrap gap-2">
-          {editorTabs.map((tab) => (
-            <button
-              key={tab.id}
-              className={`rounded-2xl px-4 py-2.5 text-sm transition ${
-                selectedTab === tab.id
-                  ? "bg-[rgba(102,89,255,0.12)] text-accent"
-                  : "bg-[#fafafe] text-[#6D6D78]"
-              }`}
-              onClick={() => setSelectedTab(tab.id)}
-              type="button"
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
+        <Tabs
+          ariaLabel="Agent studio sections"
+          items={editorTabs}
+          onChange={(tab) => setSelectedTab(tab as EditorTab)}
+          value={selectedTab}
+        />
       </Card>
 
       {selectedTab === "overview" ? (
@@ -842,8 +833,8 @@ export function AgentStudioScreen({ agentId }: { agentId?: string }) {
       {selectedTab === "tts" ? renderRuntimeTab("tts") : null}
 
       {selectedTab === "states" ? (
-        <div className="grid gap-6 xl:grid-cols-[1.25fr_0.95fr]">
-          <Card className="space-y-4">
+        <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1.25fr)_minmax(22rem,0.95fr)]">
+          <Card className="min-w-0 space-y-4">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <h2 className="text-lg font-semibold text-[#17171F]">State map</h2>
@@ -863,21 +854,23 @@ export function AgentStudioScreen({ agentId }: { agentId?: string }) {
             </div>
 
             {draftAgent.flowNodes.length ? (
-              <div className="surface-grid h-[620px] overflow-hidden rounded-[20px] border border-border bg-white">
-                <AgentFlowCanvas
-                  edges={draftAgent.flowEdges}
-                  nodes={draftAgent.flowNodes}
-                  onMoveNode={(id, position) =>
-                    updateDraft((agent) => ({
-                      ...agent,
-                      flowNodes: agent.flowNodes.map((node) =>
-                        node.id === id ? { ...node, ...position } : node
-                      ),
-                    }))
-                  }
-                  selectedId={selectedState?.id ?? ""}
-                  onSelect={setSelectedStateId}
-                />
+              <div className="min-w-0 overflow-hidden rounded-[20px] border border-border bg-white">
+                <div className="surface-grid max-w-full overflow-x-auto scrollbar-subtle">
+                  <AgentFlowCanvas
+                    edges={draftAgent.flowEdges}
+                    nodes={draftAgent.flowNodes}
+                    onMoveNode={(id, position) =>
+                      updateDraft((agent) => ({
+                        ...agent,
+                        flowNodes: agent.flowNodes.map((node) =>
+                          node.id === id ? { ...node, ...position } : node
+                        ),
+                      }))
+                    }
+                    selectedId={selectedState?.id ?? ""}
+                    onSelect={setSelectedStateId}
+                  />
+                </div>
               </div>
             ) : (
               <EmptyState
@@ -887,7 +880,7 @@ export function AgentStudioScreen({ agentId }: { agentId?: string }) {
             )}
           </Card>
 
-          <Card className="space-y-5">
+          <Card className="min-w-0 space-y-5 xl:sticky xl:top-6 xl:max-h-[calc(100vh-8rem)] xl:overflow-y-auto">
             {selectedState ? (
               <>
                 <div className="flex items-start justify-between gap-3">

@@ -5,6 +5,7 @@ import { Room, RoomEvent, Track, type Participant, type TrackPublication, type T
 import {
   Bot,
   CheckCircle2,
+  Gauge,
   CircleAlert,
   Mic,
   PhoneOff,
@@ -23,7 +24,14 @@ import {
 import { useMockApp } from "@/lib/mock-app";
 import { getProviderLabel, parsePhoneNumbers } from "@/lib/voice-stack";
 
-type SessionStatus = "idle" | "preparing" | "connecting" | "connected" | "error";
+type SessionStatus =
+  | "idle"
+  | "preparing"
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "stalled"
+  | "error";
 
 type JoinDetails = {
   roomName: string;
@@ -44,6 +52,14 @@ type ParticipantConnectionTone = "neutral" | "warning" | "success";
 
 type PersistedEvent = NonNullable<LiveTestSessionUpdatePayload["append_events"]>[number];
 
+type RuntimeEvent = PersistedEvent & {
+  source: "browser" | "worker";
+};
+
+type RuntimeMetric = RuntimeEvent & {
+  payload: Record<string, unknown>;
+};
+
 function statusTone(status: SessionStatus) {
   switch (status) {
     case "connected":
@@ -52,6 +68,8 @@ function statusTone(status: SessionStatus) {
       return "danger";
     case "preparing":
     case "connecting":
+    case "reconnecting":
+    case "stalled":
       return "warning";
     default:
       return "neutral";
@@ -66,6 +84,10 @@ function statusLabel(status: SessionStatus) {
       return "Connecting";
     case "connected":
       return "Connected";
+    case "reconnecting":
+      return "Reconnecting";
+    case "stalled":
+      return "Waiting for agent";
     case "error":
       return "Needs attention";
     default:
@@ -112,6 +134,41 @@ function formatDuration(startedAt: string | null, endedAt?: string) {
     .padStart(2, "0");
   const seconds = (elapsedSeconds % 60).toString().padStart(2, "0");
   return `${minutes}:${seconds}`;
+}
+
+function formatRuntimeValue(value: unknown, field?: string) {
+  if (typeof value === "number") {
+    const isSeconds = Boolean(
+      field && ["delay", "ttft", "ttfb", "duration", "latency", "time"].some((part) => field.includes(part))
+    );
+    return isSeconds ? `${value.toFixed(2)}s` : String(value);
+  }
+  if (typeof value === "boolean") {
+    return value ? "yes" : "no";
+  }
+  return value === null || value === undefined ? "-" : String(value);
+}
+
+function runtimeEventMessage(eventType: string, payload: Record<string, unknown>) {
+  if (eventType === "turn.metrics") {
+    return `${String(payload.label || payload.metric_type || "Provider")} timing recorded`;
+  }
+  if (eventType === "turn.stt_final") {
+    return `STT finalized${payload.characters ? ` (${payload.characters} chars)` : ""}`;
+  }
+  if (eventType.endsWith("user_state_changed")) {
+    return `User state: ${String(payload.new_state || "changed")}`;
+  }
+  if (eventType.endsWith("agent_state_changed")) {
+    return `Agent state: ${String(payload.new_state || "changed")}`;
+  }
+  if (eventType === "turn.overlapping_speech") {
+    return payload.is_interruption ? "Interruption detected" : "Overlapping speech observed";
+  }
+  if (eventType === "turn.false_interruption") {
+    return payload.resumed ? "False interruption recovered" : "False interruption detected";
+  }
+  return eventType.replaceAll(".", " ");
 }
 
 function buildWaveBars(active: boolean) {
@@ -179,6 +236,65 @@ function ParticipantMeter({
   );
 }
 
+function PipelineMetrics({ metrics }: { metrics: Record<string, RuntimeMetric> }) {
+  const timingRows = [
+    { label: "End-of-turn decision", metric: "eou_metrics", field: "end_of_utterance_delay" },
+    { label: "Transcript finalization", metric: "eou_metrics", field: "transcription_delay" },
+    { label: "LLM first token", metric: "llm_metrics", field: "ttft" },
+    { label: "TTS first audio", metric: "tts_metrics", field: "ttfb" },
+    { label: "Response start", metric: "response_latency", field: "latency_seconds" },
+  ];
+  const metricCount = Object.keys(metrics).length;
+
+  return (
+    <div className="rounded-[24px] border border-border bg-white p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[rgba(102,89,255,0.12)] text-accent">
+            <Gauge size={18} />
+          </div>
+          <div>
+            <h3 className="text-base font-semibold text-[#17171F]">Pipeline metrics</h3>
+            <p className="mt-1 text-sm text-[#6D6D78]">Latest timings received from the worker.</p>
+          </div>
+        </div>
+        <Badge tone={metricCount ? "success" : "neutral"}>{metricCount} layers</Badge>
+      </div>
+
+      <div className="mt-5 grid gap-2 sm:grid-cols-2">
+        {timingRows.map((row) => {
+          const metric = metrics[row.metric];
+          return (
+            <div className="rounded-2xl border border-border bg-[#FAFAFD] px-3 py-3" key={row.label}>
+              <p className="text-[10px] uppercase tracking-[0.14em] text-[#8F8FA3]">{row.label}</p>
+              <p className="mt-1 text-sm font-semibold text-[#17171F]">
+                {formatRuntimeValue(metric?.payload[row.field], row.field)}
+              </p>
+            </div>
+          );
+        })}
+      </div>
+
+      {metricCount ? (
+        <div className="mt-4 space-y-2 border-t border-border pt-4">
+          {Object.entries(metrics).map(([metricType, event]) => (
+            <div className="flex items-center justify-between gap-3 text-xs" key={metricType}>
+              <span className="font-medium text-[#4B4B59]">
+                {formatRuntimeValue(event.payload.label || metricType)}
+              </span>
+              <span className="text-[#8F8FA3]">{event.occurred_at ? new Date(event.occurred_at).toLocaleTimeString() : "-"}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="mt-4 rounded-2xl border border-dashed border-border bg-[#FCFCFF] px-4 py-4 text-center text-sm text-[#6D6D78]">
+          Worker metrics will appear after the first turn.
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function LivePage() {
   const {
     tenantSlug,
@@ -193,13 +309,16 @@ export default function LivePage() {
   const [status, setStatus] = useState<SessionStatus>("idle");
   const [error, setError] = useState("");
   const [details, setDetails] = useState<JoinDetails | null>(null);
-  const [events, setEvents] = useState<string[]>([]);
+  const [events, setEvents] = useState<RuntimeEvent[]>([]);
+  const [latestMetrics, setLatestMetrics] = useState<Record<string, RuntimeMetric>>({});
   const [transcript, setTranscript] = useState<TranscriptTurn[]>([]);
   const [sessionRecord, setSessionRecord] = useState<LiveTestSessionRecord | null>(null);
   const [activeSpeaker, setActiveSpeaker] = useState<ParticipantActivity>(null);
   const [microphonePublished, setMicrophonePublished] = useState(false);
   const [agentParticipantConnected, setAgentParticipantConnected] = useState(false);
   const [remoteAudioSubscribed, setRemoteAudioSubscribed] = useState(false);
+  const [audioPlaybackBlocked, setAudioPlaybackBlocked] = useState(false);
+  const [isEnding, setIsEnding] = useState(false);
   const [variableInputs, setVariableInputs] = useState<Record<string, string>>({});
   const [, setClockTick] = useState(0);
 
@@ -207,20 +326,24 @@ export default function LivePage() {
   const roomRef = useRef<Room | null>(null);
   const persistTimerRef = useRef<number | null>(null);
   const speakerTimerRef = useRef<number | null>(null);
+  const stallTimerRef = useRef<number | null>(null);
   const callIdRef = useRef<string | null>(null);
   const startedAtRef = useRef<string | null>(null);
   const transcriptRef = useRef<TranscriptTurn[]>([]);
   const transcriptDirtyRef = useRef(false);
   const pendingEventsRef = useRef<PersistedEvent[]>([]);
+  const latestMetricsRef = useRef<Record<string, RuntimeMetric>>({});
   const persistChainRef = useRef(Promise.resolve());
   const finalizedRef = useRef(false);
+  const manualDisconnectRef = useRef(false);
+  const disconnectingRef = useRef(false);
   const detailsRef = useRef<JoinDetails | null>(null);
   const eventCountRef = useRef(0);
   const statusRef = useRef<SessionStatus>("idle");
   const agentNameRef = useRef("");
 
   const isConnecting = status === "preparing" || status === "connecting";
-  const isLive = status === "connected";
+  const isLive = status === "connected" || status === "reconnecting" || status === "stalled";
 
   const sttAccount = providerAccounts.find(
     (account) => account.id === selectedAgent?.runtimeProfile.stt.providerAccountId
@@ -349,6 +472,9 @@ export default function LivePage() {
       llm_vendor: llmAccount?.vendorName || "",
       tts_vendor: ttsAccount?.vendorName || "",
       sample_rate: selectedAgent?.runtimeProfile.workflow.sampleRate || 24000,
+      runtime_metrics: Object.fromEntries(
+        Object.entries(latestMetricsRef.current).map(([metricType, event]) => [metricType, event.payload])
+      ),
     };
   }
 
@@ -356,12 +482,14 @@ export default function LivePage() {
     setError("");
     setDetails(null);
     setEvents([]);
+    setLatestMetrics({});
     setTranscript([]);
     setSessionRecord(null);
     setActiveSpeaker(null);
     setMicrophonePublished(false);
     setAgentParticipantConnected(false);
     setRemoteAudioSubscribed(false);
+    setAudioPlaybackBlocked(false);
     eventCountRef.current = 0;
     detailsRef.current = null;
     callIdRef.current = null;
@@ -369,7 +497,11 @@ export default function LivePage() {
     transcriptRef.current = [];
     transcriptDirtyRef.current = false;
     pendingEventsRef.current = [];
+    latestMetricsRef.current = {};
     finalizedRef.current = false;
+    disconnectingRef.current = false;
+    manualDisconnectRef.current = false;
+    setIsEnding(false);
     if (speakerTimerRef.current) {
       window.clearTimeout(speakerTimerRef.current);
       speakerTimerRef.current = null;
@@ -434,20 +566,68 @@ export default function LivePage() {
     }, 450);
   }
 
+  function appendRuntimeEvent(event: RuntimeEvent) {
+    const payload = event.payload || {};
+    const normalizedEvent: RuntimeEvent = { ...event, payload };
+    setEvents((current) => [normalizedEvent, ...current].slice(0, 100));
+    eventCountRef.current += 1;
+
+    if (event.event_type === "turn.metrics" && typeof payload.metric_type === "string") {
+      const metric = normalizedEvent as RuntimeMetric;
+      latestMetricsRef.current = { ...latestMetricsRef.current, [payload.metric_type]: metric };
+      setLatestMetrics(latestMetricsRef.current);
+    }
+
+    // VAD emits roughly once per second. Keep it visible locally, but do not turn
+    // every heartbeat into a database write during a live call.
+    if (!(event.event_type === "turn.metrics" && payload.metric_type === "vad_metrics")) {
+      pendingEventsRef.current.push({
+        event_type: event.event_type,
+        message: event.message,
+        occurred_at: event.occurred_at,
+        payload,
+      });
+      schedulePersist();
+    }
+  }
+
   function pushEvent(message: string, eventType = "runtime", payload: Record<string, unknown> = {}) {
-    const occurredAt = new Date().toISOString();
-    setEvents((current) => {
-      const next = [`${nowLabel()} · ${message}`, ...current].slice(0, 20);
-      eventCountRef.current += 1;
-      return next;
-    });
-    pendingEventsRef.current.push({
+    appendRuntimeEvent({
       event_type: eventType,
       message,
-      occurred_at: occurredAt,
+      occurred_at: new Date().toISOString(),
       payload,
+      source: "browser",
     });
-    schedulePersist();
+  }
+
+  function ingestRuntimeData(data: Uint8Array, topic?: string) {
+    if (topic && topic !== "voice_runtime") {
+      return;
+    }
+    try {
+      const decoded: unknown = JSON.parse(new TextDecoder().decode(data));
+      if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) {
+        return;
+      }
+      const record = decoded as Record<string, unknown>;
+      if (typeof record.event_type !== "string") {
+        return;
+      }
+      const { event_type: eventType, message, ...payload } = record;
+      appendRuntimeEvent({
+        event_type: eventType,
+        message: typeof message === "string" ? message : runtimeEventMessage(eventType, payload),
+        occurred_at: new Date().toISOString(),
+        payload,
+        source: "worker",
+      });
+      if (eventType === "workflow.ended" && roomRef.current && !disconnectingRef.current) {
+        void disconnectRoom();
+      }
+    } catch {
+      pushEvent("Received an unreadable runtime event.", "runtime_event_error");
+    }
   }
 
   function appendTranscriptSegments(
@@ -498,6 +678,8 @@ export default function LivePage() {
       persistTimerRef.current = null;
     }
 
+    // Teardown must not wait for the live UI. Persistence remains serialized so
+    // the final snapshot is written after any already in-flight draft update.
     await queuePersist(true);
 
     const endedAt = new Date().toISOString();
@@ -522,16 +704,31 @@ export default function LivePage() {
   }
 
   async function disconnectRoom() {
+    if (disconnectingRef.current) {
+      return;
+    }
+    disconnectingRef.current = true;
+    setIsEnding(true);
+    manualDisconnectRef.current = true;
     const room = roomRef.current;
     roomRef.current = null;
-    if (room) {
-      await room.disconnect();
-    }
+    // Stop capture and leave the live branch immediately. Remote persistence
+    // and LiveKit cleanup must never keep the microphone open in the browser.
+    setStatus("idle");
+    setActiveSpeaker(null);
+    setMicrophonePublished(false);
+    setAgentParticipantConnected(false);
+    setRemoteAudioSubscribed(false);
     if (audioHostRef.current) {
       audioHostRef.current.innerHTML = "";
     }
-    setStatus("idle");
-    setActiveSpeaker(null);
+    if (room) {
+      await room.localParticipant.setMicrophoneEnabled(false).catch(() => undefined);
+      await Promise.race([
+        room.disconnect().catch(() => undefined),
+        new Promise<void>((resolve) => window.setTimeout(resolve, 1500)),
+      ]);
+    }
     await finalizeSession(
       "completed",
       `Browser live test completed for ${selectedAgent?.name || "the selected agent"}.`,
@@ -549,17 +746,40 @@ export default function LivePage() {
         pushEvent("Connected to LiveKit room.", "room_connected", {
           room_name: detailsRef.current?.roomName || "",
         });
+        if (stallTimerRef.current) {
+          window.clearTimeout(stallTimerRef.current);
+        }
+        stallTimerRef.current = window.setTimeout(() => {
+          const roomHasRemoteParticipant = room.remoteParticipants.size > 0;
+          if (!roomHasRemoteParticipant) {
+            setStatus("stalled");
+            setError("The room is connected, but the agent has not joined or published audio yet.");
+            pushEvent("Waiting for agent audio timed out.", "agent_wait_timeout");
+          }
+        }, 12000);
         if (callIdRef.current) {
-          void updateLiveTestSession(tenantSlug, workspaceId, callIdRef.current, {
-            lifecycle_status: "in_progress",
-            started_at: startedAt,
-            metrics: buildMetrics(),
-          })
-            .then((updated) => setSessionRecord(updated))
+          persistChainRef.current = persistChainRef.current
+            .then(async () => {
+              if (finalizedRef.current || !callIdRef.current) {
+                return;
+              }
+              const updated = await updateLiveTestSession(tenantSlug, workspaceId, callIdRef.current, {
+                lifecycle_status: "in_progress",
+                started_at: startedAt,
+                metrics: buildMetrics(),
+              });
+              if (!finalizedRef.current) {
+                setSessionRecord(updated);
+              }
+            })
             .catch((persistError) => console.error("live session start persist failed", persistError));
         }
       })
       .on(RoomEvent.Disconnected, () => {
+        if (stallTimerRef.current) {
+          window.clearTimeout(stallTimerRef.current);
+          stallTimerRef.current = null;
+        }
         if (audioHostRef.current) {
           audioHostRef.current.innerHTML = "";
         }
@@ -569,6 +789,33 @@ export default function LivePage() {
         setAgentParticipantConnected(false);
         setRemoteAudioSubscribed(false);
         pushEvent("LiveKit room closed.", "room_disconnected");
+        if (!manualDisconnectRef.current) {
+          void finalizeSession(
+            "cancelled",
+            `The browser live test disconnected before completion for ${selectedAgent?.name || "the selected agent"}.`,
+            "LiveKit connection closed",
+            "Check the browser network and microphone permissions, then rejoin the room."
+          );
+        }
+      })
+      .on(RoomEvent.Reconnecting, () => {
+        setStatus("reconnecting");
+        pushEvent("LiveKit is reconnecting.", "room_reconnecting");
+      })
+      .on(RoomEvent.Reconnected, () => {
+        setStatus("connected");
+        setError("");
+        pushEvent("LiveKit reconnected.", "room_reconnected");
+      })
+      .on(RoomEvent.AudioPlaybackStatusChanged, (playing) => {
+        setAudioPlaybackBlocked(!playing);
+        if (!playing) {
+          pushEvent("Browser audio playback needs user interaction.", "audio_playback_blocked");
+        }
+      })
+      .on(RoomEvent.MediaDevicesError, (deviceError) => {
+        setError(`Microphone access failed: ${deviceError.message}`);
+        pushEvent("Microphone access failed.", "microphone_error");
       })
       .on(RoomEvent.ParticipantConnected, (participant) => {
         if (participant.identity !== room.localParticipant.identity) {
@@ -588,7 +835,10 @@ export default function LivePage() {
         element.autoplay = true;
         element.className = "hidden";
         audioHostRef.current.appendChild(element);
-        void element.play().catch(() => undefined);
+        void element.play().catch(() => {
+          setAudioPlaybackBlocked(true);
+          pushEvent("Browser blocked remote audio playback.", "audio_playback_blocked");
+        });
         pushEvent(`Remote audio subscribed for ${participant.identity}.`, "audio_subscribed", {
           participant_identity: participant.identity,
         });
@@ -598,7 +848,26 @@ export default function LivePage() {
       })
       .on(RoomEvent.TranscriptionReceived, (segments, participant, publication) => {
         appendTranscriptSegments(segments, participant, publication);
+      })
+      .on(RoomEvent.DataReceived, (payload, _participant, _kind, topic) => {
+        ingestRuntimeData(payload, topic);
       });
+  }
+
+  async function enableAudioPlayback() {
+    const room = roomRef.current;
+    if (!room) {
+      return;
+    }
+    try {
+      await room.startAudio();
+      setAudioPlaybackBlocked(false);
+      setError("");
+      pushEvent("Remote audio playback enabled.", "audio_playback_enabled");
+    } catch (playbackError) {
+      const message = playbackError instanceof Error ? playbackError.message : "Audio playback is still blocked.";
+      setError(`${message} Click Enable audio again after interacting with the page.`);
+    }
   }
 
   async function handleConnect() {
@@ -682,6 +951,13 @@ export default function LivePage() {
       setStatus("error");
       setError(message);
       pushEvent(message, "session_error");
+      const room = roomRef.current;
+      roomRef.current = null;
+      if (room) {
+        manualDisconnectRef.current = true;
+        await room.disconnect().catch(() => undefined);
+        manualDisconnectRef.current = false;
+      }
       await finalizeSession(
         "failed",
         `Browser live test failed for ${selectedAgent?.name || "the selected agent"}.`,
@@ -701,6 +977,10 @@ export default function LivePage() {
       if (speakerTimerRef.current) {
         window.clearTimeout(speakerTimerRef.current);
       }
+      if (stallTimerRef.current) {
+        window.clearTimeout(stallTimerRef.current);
+      }
+      manualDisconnectRef.current = true;
       if (room) {
         void room.disconnect();
       }
@@ -816,7 +1096,12 @@ export default function LivePage() {
                   <p className="text-xs uppercase tracking-[0.16em] text-[#6D6D78]">Dispatch</p>
                   <p className="mt-1 text-sm font-semibold text-[#17171F]">{details?.dispatchId || "Pending"}</p>
                 </div>
-                <Button variant="secondary" onClick={() => void disconnectRoom()}>
+              <Button
+                variant="secondary"
+                loading={isEnding}
+                loadingText="Ending call"
+                onClick={() => void disconnectRoom()}
+              >
                   <PhoneOff size={16} />
                   End call
                 </Button>
@@ -824,6 +1109,23 @@ export default function LivePage() {
             </div>
 
             <div className="px-6 py-6">
+              {audioPlaybackBlocked ? (
+                <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-warning/20 bg-warning/10 px-4 py-3 text-sm text-[#7A4B00]">
+                  <div className="flex items-start gap-3">
+                    <Volume2 className="mt-0.5 shrink-0" size={16} />
+                    <p>Remote audio is connected but browser playback is waiting for your permission.</p>
+                  </div>
+                  <Button size="sm" onClick={() => void enableAudioPlayback()}>
+                    Enable audio
+                  </Button>
+                </div>
+              ) : null}
+              {error ? (
+                <div className="mb-5 flex items-start gap-3 rounded-2xl border border-danger/20 bg-danger/10 px-4 py-3 text-sm text-danger">
+                  <CircleAlert className="mt-0.5 shrink-0" size={16} />
+                  <p>{error}</p>
+                </div>
+              ) : null}
               <div className="rounded-[28px] border border-border bg-[#FAFAFD] p-6">
                 <div className="grid gap-4 lg:grid-cols-2">
                   <ParticipantMeter
@@ -943,6 +1245,8 @@ export default function LivePage() {
                       </div>
                     </div>
 
+                    <PipelineMetrics metrics={latestMetrics} />
+
                     <div className="rounded-[24px] border border-border bg-white p-5">
                       <div className="flex items-center gap-3">
                         <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[rgba(139,127,255,0.18)] text-[#C7C0FF]">
@@ -974,20 +1278,43 @@ export default function LivePage() {
             <Card>
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.24em] text-accent">Runtime feed</p>
+                  <div className="flex items-center gap-2 text-accent">
+                    <Gauge size={16} />
+                    <p className="text-xs font-semibold uppercase tracking-[0.24em]">Runtime feed</p>
+                  </div>
                   <h3 className="mt-3 text-lg font-semibold text-[#17171F]">Event stream</h3>
                   <p className="mt-2 text-sm leading-6 text-[#6D6D78]">
-                    Dispatch, room, microphone, and subscription milestones for this test session.
+                    Browser, LiveKit, turn-taking, and provider events for this test session.
                   </p>
                 </div>
                 <Badge tone={events.length ? "success" : "neutral"}>{events.length} events</Badge>
               </div>
 
-              <div className="mt-5 space-y-3">
+              <div className="mt-5 max-h-[560px] space-y-3 overflow-y-auto pr-1">
                 {events.length ? (
-                  events.map((event) => (
-                    <div key={event} className="rounded-2xl border border-border bg-[#fcfcff] px-4 py-3 text-sm text-[#4B4B59]">
-                      {event}
+                  events.map((event, index) => (
+                    <div key={`${event.occurred_at}-${event.event_type}-${index}`} className="rounded-2xl border border-border bg-[#fcfcff] px-4 py-3 text-sm text-[#4B4B59]">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <Badge tone={event.source === "worker" ? "neutral" : "success"}>
+                            {event.source === "worker" ? "Worker" : "Browser"}
+                          </Badge>
+                          <span className="truncate font-mono text-[11px] text-[#8F8FA3]">{event.event_type}</span>
+                        </div>
+                        <span className="shrink-0 text-[11px] text-[#8F8FA3]">
+                          {event.occurred_at ? new Date(event.occurred_at).toLocaleTimeString() : "-"}
+                        </span>
+                      </div>
+                      <p className="mt-2 font-medium text-[#17171F]">{event.message}</p>
+                      {event.payload && Object.keys(event.payload).length ? (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {Object.entries(event.payload).map(([field, value]) => (
+                            <span className="rounded-lg bg-white px-2 py-1 font-mono text-[11px] text-[#6D6D78]" key={field}>
+                              {field}={formatRuntimeValue(value, field)}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
                     </div>
                   ))
                 ) : (

@@ -156,10 +156,10 @@ describe("AgentStudioScreen", () => {
   it("renders the new step tabs and removes tools and knowledge from the editor", () => {
     render(<AgentStudioScreen agentId="agent-1" />);
 
-    expect(screen.getByRole("button", { name: "Overview" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Workflow" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Telephony" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "States" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Overview" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Workflow" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Telephony" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "States" })).toBeInTheDocument();
     expect(screen.queryByLabelText("Selected workflow")).not.toBeInTheDocument();
     expect(screen.queryByText("Shared tools catalog")).not.toBeInTheDocument();
     expect(screen.queryByText("Shared knowledge catalog")).not.toBeInTheDocument();
@@ -169,11 +169,11 @@ describe("AgentStudioScreen", () => {
     const user = userEvent.setup();
     render(<AgentStudioScreen agentId="agent-1" />);
 
-    await user.click(screen.getAllByRole("button", { name: "Workflow" })[0] as HTMLElement);
+    await user.click(screen.getAllByRole("tab", { name: "Workflow" })[0] as HTMLElement);
     expect(screen.getByText("Default call language")).toBeInTheDocument();
     expect(screen.getByText("Workflow sample rate")).toBeInTheDocument();
 
-    await user.click(screen.getAllByRole("button", { name: "STT" })[0] as HTMLElement);
+    await user.click(screen.getAllByRole("tab", { name: "STT" })[0] as HTMLElement);
     expect(screen.getByText("Model name or ID")).toBeInTheDocument();
     expect(screen.getByText("Resolved language code")).toBeInTheDocument();
   });
@@ -182,7 +182,7 @@ describe("AgentStudioScreen", () => {
     const user = userEvent.setup();
     render(<AgentStudioScreen agentId="agent-1" />);
 
-    await user.click(screen.getByRole("button", { name: "States" }));
+    await user.click(screen.getByRole("tab", { name: "States" }));
     await user.click(screen.getByRole("button", { name: "Insert variable into State prompt" }));
     await user.click(screen.getByRole("option", { name: "Farmer name ({{farmer_name}})" }));
 
@@ -224,7 +224,7 @@ describe("AgentStudioScreen", () => {
     const user = userEvent.setup();
     render(<AgentStudioScreen agentId="agent-1" />);
 
-    await user.click(screen.getByRole("button", { name: "States" }));
+    await user.click(screen.getByRole("tab", { name: "States" }));
 
     expect(screen.getByText("Closing behavior")).toBeInTheDocument();
     expect(screen.getByText("Generated closing response")).toBeInTheDocument();
@@ -359,7 +359,7 @@ describe("AgentStudioScreen", () => {
 
     render(<AgentStudioScreen agentId="agent-1" />);
 
-    await user.click(screen.getByRole("button", { name: "States" }));
+    await user.click(screen.getByRole("tab", { name: "States" }));
     await user.click(screen.getByRole("button", { name: "Auto organize" }));
     const saveButtons = screen.getAllByRole("button", { name: "Save changes" });
     const saveButton = saveButtons[saveButtons.length - 1] as HTMLElement | undefined;

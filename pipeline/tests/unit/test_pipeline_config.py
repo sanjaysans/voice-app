@@ -33,7 +33,18 @@ def test_pipeline_settings_require_url_for_dispatch_mode() -> None:
 
 def test_pipeline_settings_validate_endpointing_range() -> None:
     with pytest.raises(ValueError, match="MIN_ENDPOINTING_MS"):
-        Settings(min_endpointing_ms=900, endpointing_ms=700)
+        Settings(endpointing_mode="fixed", min_endpointing_ms=900, endpointing_ms=700)
+
+
+def test_pipeline_settings_allow_dynamic_endpointing_without_fixed_target() -> None:
+    settings = Settings(
+        endpointing_mode="dynamic",
+        min_endpointing_ms=900,
+        max_endpointing_ms=1200,
+        endpointing_ms=700,
+    )
+
+    assert settings.min_endpointing_ms == 900
 
 
 def test_pipeline_settings_reject_blank_dispatch_credentials() -> None:
@@ -44,3 +55,8 @@ def test_pipeline_settings_reject_blank_dispatch_credentials() -> None:
             livekit_api_key="",
             livekit_api_secret="",
         )
+
+
+def test_pipeline_settings_reject_negative_endpointing_values() -> None:
+    with pytest.raises(ValueError):
+        Settings(endpointing_ms=-1)

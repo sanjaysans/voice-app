@@ -12,9 +12,20 @@ const config: Config = {
         sidebar: "var(--sidebar)",
         canvas: "var(--canvas)",
         surface: "var(--surface)",
+        "surface-subtle": "var(--surface-subtle)",
+        "surface-raised": "var(--surface-raised)",
         accent: "var(--accent)",
         "accent-soft": "var(--accent-soft)",
-        border: "var(--border)"
+        "accent-ink": "var(--accent-ink)",
+        border: "var(--border)",
+        "border-strong": "var(--border-strong)",
+        text: "var(--text)",
+        muted: "var(--muted)",
+        subtle: "var(--text-subtle)",
+        focus: "var(--focus)",
+        success: "var(--success)",
+        warning: "var(--warning)",
+        danger: "var(--danger)"
       },
       borderRadius: {
         xl: "14px"

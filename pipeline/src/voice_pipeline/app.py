@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, status
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
 from voice_pipeline.application.planner import compile_runtime_plan, default_pipeline_blueprint
@@ -80,7 +80,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
 
     @app.post("/webrtc/session")
-    async def build_webrtc_session(payload: ClientSessionRequest) -> dict[str, object]:
+    async def build_webrtc_session(
+        payload: ClientSessionRequest, request: Request
+    ) -> dict[str, object]:
+        if request.headers.get("X-Voice-Internal-Key") != resolved_settings.internal_api_key:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized")
         return build_session_manifest(resolved_settings, payload)
 
     return app
