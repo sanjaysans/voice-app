@@ -398,6 +398,7 @@ class CallLogListResponse(BaseModel):
 
 EvalExecutionMode = Literal[
     "scripted_text",
+    "text_chat",
     "simulated_text",
     "scripted_audio",
     "simulated_audio",
@@ -716,6 +717,44 @@ class LiveTestSessionUpdateInput(BaseModel):
     append_events: list[LiveTestSessionEventInput] = Field(default_factory=list)
     started_at: datetime | None = None
     ended_at: datetime | None = None
+
+
+class TextChatSessionCreateInput(BaseModel):
+    agent_id: UUID
+    variables: dict[str, object] = Field(default_factory=dict)
+
+
+class TextChatMessageInput(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
+
+
+class TextChatTurnRecord(BaseModel):
+    user_text: str
+    assistant_text: str
+    active_state_id: str | None = None
+    active_state_label: str | None = None
+    transitioned: bool = False
+    transition_reason: str = ""
+    ended: bool = False
+    latency_ms: float
+    model: str
+
+
+class TextChatSessionRecord(BaseModel):
+    call_id: UUID
+    agent_id: UUID | None
+    agent_name: str
+    execution_mode: Literal["text_chat"] = "text_chat"
+    lifecycle_status: Literal["in_progress", "completed", "failed", "cancelled"]
+    active_state_id: str | None = None
+    active_state_label: str | None = None
+    model: str
+    transcript: list[dict[str, str]] = Field(default_factory=list)
+    event_log: list[dict[str, object]] = Field(default_factory=list)
+    metrics: dict[str, object] = Field(default_factory=dict)
+    started_at: datetime | None
+    ended_at: datetime | None
+    created_at: datetime
 
 
 class WorkspaceAppState(BaseModel):

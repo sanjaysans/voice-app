@@ -15,6 +15,7 @@ import {
   Volume2,
 } from "lucide-react";
 import { Badge, Button, Card, EmptyState, Input, PageHeader, Select } from "@/components/ui";
+import { TextChatTest } from "@/components/text-chat-test";
 import {
   createBrowserRtcSession,
   updateLiveTestSession,
@@ -47,6 +48,7 @@ type TranscriptTurn = {
 };
 
 type ParticipantActivity = "you" | "agent" | null;
+type LiveTestMode = "voice" | "chat";
 
 type ParticipantConnectionTone = "neutral" | "warning" | "success";
 
@@ -307,6 +309,7 @@ export default function LivePage() {
     providerAccounts,
   } = useMockApp();
   const [status, setStatus] = useState<SessionStatus>("idle");
+  const [testMode, setTestMode] = useState<LiveTestMode>("voice");
   const [error, setError] = useState("");
   const [details, setDetails] = useState<JoinDetails | null>(null);
   const [events, setEvents] = useState<RuntimeEvent[]>([]);
@@ -1009,8 +1012,18 @@ export default function LivePage() {
     );
   }
 
+  if (testMode === "chat") {
+    return <TextChatTest onModeChange={setTestMode} />;
+  }
+
   return (
     <div className="space-y-6">
+      <div className="flex justify-end">
+        <div className="flex items-center gap-2 rounded-2xl border border-border bg-white p-1" role="tablist" aria-label="Live test mode">
+          <button type="button" role="tab" aria-selected={true} className="rounded-xl bg-[rgba(102,89,255,0.12)] px-4 py-2 text-sm font-semibold text-accent">Live voice</button>
+          <button type="button" role="tab" aria-selected={false} onClick={() => setTestMode("chat")} className="rounded-xl px-4 py-2 text-sm text-[#6D6D78]">Chat test</button>
+        </div>
+      </div>
       <PageHeader
         eyebrow="Operate"
         title="Live"

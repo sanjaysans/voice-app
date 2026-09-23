@@ -8,6 +8,9 @@ import { buildDefaultRuntimeProfile } from "@/lib/voice-stack";
 const mockUseMockApp = vi.fn();
 const mockCreateBrowserRtcSession = vi.fn();
 const mockUpdateLiveTestSession = vi.fn();
+const mockCreateTextChatSession = vi.fn();
+const mockSendTextChatMessage = vi.fn();
+const mockEndTextChatSession = vi.fn();
 let latestRoom: {
   handlers: Record<string, Array<(...args: unknown[]) => void>>;
   remoteParticipants: Map<string, unknown>;
@@ -20,6 +23,9 @@ vi.mock("@/lib/mock-app", () => ({
 vi.mock("@/lib/live-session", () => ({
   createBrowserRtcSession: (...args: unknown[]) => mockCreateBrowserRtcSession(...args),
   updateLiveTestSession: (...args: unknown[]) => mockUpdateLiveTestSession(...args),
+  createTextChatSession: (...args: unknown[]) => mockCreateTextChatSession(...args),
+  sendTextChatMessage: (...args: unknown[]) => mockSendTextChatMessage(...args),
+  endTextChatSession: (...args: unknown[]) => mockEndTextChatSession(...args),
 }));
 
 vi.mock("livekit-client", () => ({
@@ -156,6 +162,9 @@ describe("LivePage", () => {
   beforeEach(() => {
     mockCreateBrowserRtcSession.mockReset();
     mockUpdateLiveTestSession.mockReset();
+    mockCreateTextChatSession.mockReset();
+    mockSendTextChatMessage.mockReset();
+    mockEndTextChatSession.mockReset();
     latestRoom = null;
     mockUpdateLiveTestSession.mockResolvedValue({
       call_id: "call-test-1",
@@ -206,6 +215,38 @@ describe("LivePage", () => {
     expect(
       screen.getByText("Finish the STT, LLM, and TTS connections in the agent runtime before launch.")
     ).toBeInTheDocument();
+  });
+
+  it("opens the text chat test without requiring audio connections", async () => {
+    const user = userEvent.setup();
+    mockCreateTextChatSession.mockResolvedValue({
+      call_id: "chat-call-1",
+      agent_id: "agent-1",
+      agent_name: "Lead Router",
+      execution_mode: "text_chat",
+      lifecycle_status: "in_progress",
+      active_state_id: null,
+      active_state_label: null,
+      model: "gpt-4.1-mini",
+      transcript: [],
+      event_log: [],
+      metrics: { turn_count: 0 },
+      started_at: "2026-09-07T10:00:00Z",
+      ended_at: null,
+      created_at: "2026-09-07T10:00:00Z",
+    });
+
+    render(<LivePage />);
+    await user.click(screen.getByRole("tab", { name: "Chat test" }));
+    expect(screen.getByRole("heading", { name: "Chat test" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Start chat test" }));
+
+    await waitFor(() => expect(mockCreateTextChatSession).toHaveBeenCalledWith(
+      "voice-demo",
+      "workspace-1",
+      { agent_id: "agent-1", variables: {} },
+    ));
+    expect(await screen.findByText("Lead Router")).toBeInTheDocument();
   });
 
   it("creates and persists a browser rtc test session from the selected agent runtime", async () => {

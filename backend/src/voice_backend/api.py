@@ -20,6 +20,7 @@ from voice_backend.auth import (
     require_workspace_admin_access,
     require_workspace_write_access,
 )
+from voice_backend.config import get_settings
 from voice_backend.database import create_session_factory, get_request_session
 from voice_backend.logging import get_logger
 from voice_backend.repositories import CallRepository
@@ -45,6 +46,8 @@ from voice_backend.schemas import (
     TeamMemberUpdateInput,
     TenantCreateInput,
     TenantUpdateInput,
+    TextChatMessageInput,
+    TextChatSessionCreateInput,
     WorkspaceCreateInput,
     WorkspaceUpdateInput,
 )
@@ -63,6 +66,8 @@ from voice_backend.services import (
     TeamAdminService,
     TenantAdminService,
     TenantOverviewService,
+    TextChatService,
+    TextChatSessionError,
     WorkspaceAdminService,
     WorkspaceStateService,
 )
@@ -819,6 +824,17 @@ async def _execute_live_evaluation_run(settings, tenant_slug: str, workspace_id,
         )
 
 
+async def _execute_text_evaluation_run(tenant_slug: str, workspace_id, run_id):
+    settings = get_settings()
+    factory = create_session_factory(settings)
+    with factory() as background_session:
+        await EvaluationService(background_session).execute_text_run(
+            tenant_slug,
+            workspace_id,
+            run_id,
+        )
+
+
 @router.post("/tenants/{tenant_slug}/workspaces/{workspace_id}/evaluations/{suite_id}/runs")
 async def run_evaluation_suite(
     tenant_slug: str,
@@ -834,8 +850,14 @@ async def run_evaluation_suite(
     try:
         run = _execute_write(
             session,
-            lambda: service.create_live_run(tenant_slug, workspace_id, suite_id, payload)
-            if payload.execution_mode == "live_audio"
+            lambda: service.create_live_run(
+                tenant_slug,
+                workspace_id,
+                suite_id,
+                payload,
+                execution_mode=payload.execution_mode,
+            )
+            if payload.execution_mode in {"live_audio", "text_chat"}
             else service.run_suite(tenant_slug, workspace_id, suite_id, payload),
         )
     except ValueError as exc:
@@ -851,6 +873,10 @@ async def run_evaluation_suite(
                 run.run_id,
             )
         )
+        _LIVE_EVALUATION_TASKS.add(task)
+        task.add_done_callback(_finish_live_evaluation_task)
+    elif payload.execution_mode == "text_chat":
+        task = asyncio.create_task(_execute_text_evaluation_run(tenant_slug, workspace_id, run.run_id))
         _LIVE_EVALUATION_TASKS.add(task)
         task.add_done_callback(_finish_live_evaluation_task)
     return run.model_dump()
@@ -939,6 +965,83 @@ async def create_browser_rtc_session(
     )
     created.call_id = live_record.call_id
     return created.model_dump()
+
+
+@router.post(
+    "/tenants/{tenant_slug}/workspaces/{workspace_id}/live/chat-sessions",
+    status_code=status.HTTP_201_CREATED,
+)
+def create_text_chat_session(
+    tenant_slug: str,
+    workspace_id: UUID,
+    payload: TextChatSessionCreateInput,
+    session: SessionDependency,
+    auth: AuthDependency,
+):
+    require_workspace_write_access(auth, tenant_slug, workspace_id)
+    try:
+        record = _execute_write(
+            session,
+            lambda: TextChatService(session).create_session(
+                tenant_slug,
+                workspace_id,
+                payload,
+                launched_by=auth.email,
+            ),
+        )
+    except TextChatSessionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if record is None:
+        raise HTTPException(status_code=404, detail="text chat agent not found")
+    return record.model_dump(mode="json")
+
+
+@router.post(
+    "/tenants/{tenant_slug}/workspaces/{workspace_id}/live/chat-sessions/{call_id}/messages"
+)
+async def send_text_chat_message(
+    tenant_slug: str,
+    workspace_id: UUID,
+    call_id: UUID,
+    payload: TextChatMessageInput,
+    session: SessionDependency,
+    auth: AuthDependency,
+):
+    require_workspace_write_access(auth, tenant_slug, workspace_id)
+    try:
+        result = await TextChatService(session).send_message(
+            tenant_slug, workspace_id, call_id, payload
+        )
+        session.commit()
+        clear_session_cache()
+        clear_read_cache()
+    except TextChatSessionError as exc:
+        session.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        session.rollback()
+        raise HTTPException(status_code=500, detail="text chat persistence failed") from exc
+    return result.model_dump(mode="json")
+
+
+@router.post(
+    "/tenants/{tenant_slug}/workspaces/{workspace_id}/live/chat-sessions/{call_id}/end"
+)
+def end_text_chat_session(
+    tenant_slug: str,
+    workspace_id: UUID,
+    call_id: UUID,
+    session: SessionDependency,
+    auth: AuthDependency,
+):
+    require_workspace_write_access(auth, tenant_slug, workspace_id)
+    record = _execute_write(
+        session,
+        lambda: TextChatService(session).end_session(tenant_slug, workspace_id, call_id),
+    )
+    if record is None:
+        raise HTTPException(status_code=404, detail="text chat session not found")
+    return record.model_dump(mode="json")
 
 
 @router.patch("/tenants/{tenant_slug}/workspaces/{workspace_id}/live/sessions/{call_id}")

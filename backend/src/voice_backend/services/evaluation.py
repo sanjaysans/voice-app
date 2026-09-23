@@ -9,7 +9,9 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from voice_backend.logging import get_logger
 from voice_backend.models import (
+    Call,
     CallEvent,
     EvalAssertionResult,
     EvalCase,
@@ -43,10 +45,24 @@ from voice_backend.schemas import (
     EvalSuiteDetailRecord,
     EvalSuiteRecord,
     EvalSuiteUpdateInput,
+    TextChatMessageInput,
+    TextChatSessionCreateInput,
 )
+from voice_backend.services.evaluation_judge import EvaluationJudge, EvaluationJudgeError
 
-SUPPORTED_EXECUTION_MODES = {"scripted_text", "live_audio"}
+SUPPORTED_EXECUTION_MODES = {"scripted_text", "text_chat", "live_audio"}
 LIVE_CASE_TIMEOUT_SECONDS = 180
+SEMANTIC_JUDGE_MODES = {"text_chat", "live_audio"}
+HARD_ASSERTION_TYPES = {
+    "outcome",
+    "state_transition",
+    "tool_call",
+    "variable",
+    "guardrail",
+    "max_turns",
+}
+SEMANTIC_TEXT_ASSERTION_TYPES = {"contains", "not_contains", "regex"}
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -175,6 +191,63 @@ def _trace_for_case(case_version: EvalCaseVersion) -> dict[str, object]:
         "tool_calls": scenario.get("tool_calls", []),
         "variables": scenario.get("variables", {}),
         "guardrails": scenario.get("guardrails", []),
+    }
+
+
+def _text_case_inputs(scenario: dict[str, object], caller_config: dict[str, object]) -> list[str]:
+    raw_turns = scenario.get("turns", [])
+    inputs: list[str] = []
+    if isinstance(raw_turns, list):
+        for raw_turn in raw_turns:
+            if not isinstance(raw_turn, dict):
+                continue
+            text = str(
+                raw_turn.get("user", raw_turn.get("caller", raw_turn.get("input", "")))
+            ).strip()
+            if text:
+                inputs.append(text)
+    if inputs:
+        return inputs
+    initial = caller_config.get("initial_utterance", scenario.get("initial_utterance", ""))
+    return [str(initial).strip()] if str(initial).strip() else []
+
+
+def _trace_for_text_call(call: Call) -> dict[str, object]:
+    resolved = dict(call.resolved_config or {})
+    transcript = [item for item in resolved.get("transcript", []) if isinstance(item, dict)]
+    turns = [
+        {
+            "turn": index,
+            "speaker": "caller" if str(item.get("speaker")) == "You" else "agent",
+            "text": str(item.get("text", "")),
+        }
+        for index, item in enumerate(transcript, start=1)
+    ]
+    transitions = []
+    for event in resolved.get("event_log", []):
+        if not isinstance(event, dict) or event.get("event_type") != "workflow.transitioned":
+            continue
+        payload = event.get("payload", {})
+        if isinstance(payload, dict):
+            transitions.append(
+                {
+                    "from": payload.get("from_state", ""),
+                    "to": payload.get("to_state", ""),
+                    "reason": payload.get("reason", ""),
+                }
+            )
+    return {
+        "turns": turns,
+        "transcript": transcript,
+        "assistant_text": " ".join(
+            str(item.get("text", "")) for item in transcript if str(item.get("speaker")) != "You"
+        ),
+        "outcome": resolved.get("outcome", ""),
+        "transitions": transitions,
+        "tool_calls": resolved.get("tool_calls", []),
+        "variables": resolved.get("variables", {}),
+        "guardrails": resolved.get("guardrails", []),
+        "metrics": resolved.get("metrics", {}),
     }
 
 
@@ -344,6 +417,98 @@ def _score_case(
     return score, passed, assertions, metric_results
 
 
+def _merge_semantic_judge(
+    case_version: EvalCaseVersion,
+    deterministic_assertions: list[dict[str, object]],
+    judge_result,
+) -> tuple[float, bool, list[dict[str, object]], list[dict[str, object]]]:
+    judge_assertions = {
+        str(item.get("key")): item
+        for item in judge_result.assertions
+        if isinstance(item, dict) and item.get("key")
+    }
+    assertions = [dict(item) for item in deterministic_assertions]
+    for assertion in assertions:
+        assertion_type = str(assertion.get("type", ""))
+        if assertion_type not in SEMANTIC_TEXT_ASSERTION_TYPES or assertion.get("critical"):
+            continue
+        semantic = judge_assertions.get(str(assertion.get("key")))
+        if semantic is None:
+            continue
+        assertion["passed"] = bool(semantic.get("passed", False))
+        assertion["actual"] = {
+            **_as_dict(assertion.get("actual")),
+            "semantic_judge": {
+                "score": semantic.get("score", 0.0),
+                "evidence": semantic.get("evidence", []),
+            },
+        }
+        reason = str(semantic.get("reason", "")).strip()
+        assertion["explanation"] = (
+            f"Semantic judge: {reason}" if reason else "Semantic judge evaluated the response."
+        )[:1000]
+
+    hard_failure = any(
+        not bool(item.get("passed"))
+        and (
+            bool(item.get("critical"))
+            or str(item.get("type", "")) in HARD_ASSERTION_TYPES
+        )
+        for item in assertions
+    )
+    rubric = [dict(item) for item in _as_list(case_version.rubric) if isinstance(item, dict)]
+    judge_metrics = {
+        str(item.get("key")): item
+        for item in judge_result.metrics
+        if isinstance(item, dict) and item.get("key")
+    }
+    metric_results: list[dict[str, object]] = []
+    if rubric:
+        for metric in rubric:
+            key = str(metric.get("key", "quality"))
+            judged = judge_metrics.get(key)
+            try:
+                weight = float(metric.get("weight", 1.0))
+            except (TypeError, ValueError):
+                weight = 1.0
+            score = float(judged.get("score", judge_result.score)) if judged else judge_result.score
+            metric_results.append(
+                {
+                    "metric_key": key,
+                    "score": min(max(score, 0.0), 1.0),
+                    "weight": min(max(weight, 0.001), 100.0),
+                    "explanation": str(
+                        judged.get("reason", judge_result.reason) if judged else judge_result.reason
+                    )[:1000],
+                    "judge_metadata": {
+                        "judge": "llm",
+                        "version": "v1",
+                        "model": judge_result.model,
+                        "threshold": metric.get("threshold", judge_result.threshold),
+                    },
+                }
+            )
+    else:
+        metric_results.append(
+            {
+                "metric_key": "semantic_quality",
+                "score": judge_result.score,
+                "weight": 1.0,
+                "explanation": judge_result.reason,
+                "judge_metadata": {
+                    "judge": "llm",
+                    "version": "v1",
+                    "model": judge_result.model,
+                    "threshold": judge_result.threshold,
+                    "provider_account_id": judge_result.provider_account_id,
+                },
+            }
+        )
+    score = 0.0 if hard_failure else judge_result.score
+    passed = bool(judge_result.passed) and not hard_failure
+    return score, passed, assertions, metric_results
+
+
 def _initial_utterance(scenario: dict[str, object], caller_config: dict[str, object]) -> str:
     return str(
         caller_config.get("initial_utterance")
@@ -436,6 +601,38 @@ class EvaluationService:
         self.agents = AgentRepository(session)
         self.calls = CallRepository(session)
         self.evals = EvalRepository(session)
+
+    async def _score_case_with_judge(
+        self, run: EvalRun, case_version: EvalCaseVersion, trace: dict[str, object]
+    ) -> tuple[float, bool, list[dict[str, object]], list[dict[str, object]]]:
+        deterministic = _score_case(case_version, trace)
+        defaults = _as_dict(run.suite_version.execution_defaults)
+        judge_config = _as_dict(defaults.get("semantic_judge"))
+        enabled = bool(
+            judge_config.get(
+                "enabled",
+                run.execution_mode in SEMANTIC_JUDGE_MODES,
+            )
+        )
+        if not enabled or not str(trace.get("assistant_text", "")).strip():
+            return deterministic
+        try:
+            judge_result = await EvaluationJudge(self.session).judge(
+                run.tenant_id,
+                run.suite_version.agent_version,
+                case_version,
+                trace,
+                defaults,
+            )
+        except (EvaluationJudgeError, ValueError, TypeError) as exc:
+            logger.warning(
+                "evaluation.semantic_judge_fallback",
+                run_id=str(run.id),
+                case_id=str(case_version.case_id),
+                error=exc.__class__.__name__,
+            )
+            return deterministic
+        return _merge_semantic_judge(case_version, deterministic[2], judge_result)
 
     def _tenant_workspace(self, tenant_slug: str, workspace_id):
         tenant = self.tenants.get_by_slug(tenant_slug)
@@ -722,7 +919,13 @@ class EvaluationService:
         return self.get_run(tenant_slug, workspace_id, run.id)
 
     def create_live_run(
-        self, tenant_slug: str, workspace_id, suite_id, payload: EvalRunCreateInput
+        self,
+        tenant_slug: str,
+        workspace_id,
+        suite_id,
+        payload: EvalRunCreateInput,
+        *,
+        execution_mode: str = "live_audio",
     ) -> EvalRunRecord | None:
         context = self._tenant_workspace(tenant_slug, workspace_id)
         if context is None:
@@ -747,14 +950,14 @@ class EvaluationService:
             workspace_id=workspace.id,
             suite_id=suite.id,
             suite_version_id=suite_version.id,
-            execution_mode="live_audio",
+            execution_mode=execution_mode,
             status="queued",
             total_cases=len(selected_cases) * payload.repeat_count,
             config_snapshot={
                 "repeat_count": payload.repeat_count,
                 "fail_fast": payload.fail_fast,
                 "agent_version_id": str(suite_version.agent_version_id),
-                "execution_mode": "live_audio",
+                "execution_mode": execution_mode,
                 "case_version_ids": {
                     case_id: str(version.id) for case_id, version in case_versions.items()
                 },
@@ -776,6 +979,192 @@ class EvaluationService:
                 )
         self.session.flush()
         return self.get_run(tenant_slug, workspace_id, run.id)
+
+    async def execute_text_run(self, tenant_slug: str, workspace_id, run_id) -> None:
+        try:
+            await self._execute_text_run(tenant_slug, workspace_id, run_id)
+        except Exception as exc:
+            self.session.rollback()
+            run = self.evals.get_run_for_execution(run_id)
+            if run is not None:
+                now = _now()
+                run.status = "failed"
+                for case_run in run.case_runs:
+                    if case_run.status in {"queued", "running"}:
+                        case_run.status = "failed"
+                        case_run.passed = False
+                        case_run.failure_summary = "Text chat evaluation stopped before the case completed."
+                        case_run.ended_at = now
+                run.passed_cases = sum(1 for item in run.case_runs if item.passed is True)
+                run.failed_cases = sum(1 for item in run.case_runs if item.passed is False)
+                run.summary = f"Text chat evaluation failed: {str(exc)[:850]}"
+                run.ended_at = now
+                self.session.commit()
+            raise
+
+    async def _execute_text_run(self, tenant_slug: str, workspace_id, run_id) -> None:
+        from voice_backend.services.text_chat import TextChatService
+
+        run = self.evals.get_run_for_execution(run_id)
+        if run is None:
+            return
+        run.status = "running"
+        run.started_at = _now()
+        self.session.commit()
+        service = TextChatService(self.session)
+        for case_run in list(run.case_runs):
+            if case_run.status != "queued":
+                continue
+            case = case_run.case_version.case
+            scenario = _as_dict(case_run.case_version.scenario)
+            caller_config = _as_dict(case_run.case_version.caller_config)
+            variables = _evaluation_variables(run.suite_version.agent_version, scenario, caller_config)
+            case_run.status = "running"
+            case_run.started_at = _now()
+            self.session.commit()
+            try:
+                session_record = service.create_session(
+                    tenant_slug,
+                    workspace_id,
+                    TextChatSessionCreateInput(
+                        agent_id=run.suite_version.suite.agent_definition_id,
+                        variables=variables,
+                    ),
+                    launched_by="evaluation",
+                )
+                if session_record is None:
+                    raise ValueError("evaluation agent configuration not found")
+                self.session.commit()
+                user_turns = _text_case_inputs(scenario, caller_config)
+                if not user_turns:
+                    raise ValueError("text chat evaluation case has no caller input")
+                for user_text in user_turns:
+                    await service.send_message(
+                        tenant_slug,
+                        workspace_id,
+                        session_record.call_id,
+                        TextChatMessageInput(text=user_text),
+                    )
+                    self.session.commit()
+                call = self.calls.get_for_workspace(
+                    run.tenant_id, run.workspace_id, session_record.call_id
+                )
+                if call is None:
+                    raise ValueError("text chat evaluation call was not persisted")
+                resolved = dict(call.resolved_config or {})
+                resolved.update(
+                    {
+                        "source": "eval",
+                        "eval_run_id": str(run.id),
+                        "eval_case_id": str(case.id),
+                        "execution_mode": "text_chat",
+                        "status_label": "Completed",
+                        "lifecycle_status": "completed",
+                        "summary": "Text chat evaluation completed.",
+                    }
+                )
+                self.calls.update(call, status="completed", resolved_config=resolved, ended_at=_now())
+                self.session.flush()
+                trace = _trace_for_text_call(call)
+                scored = await self._score_case_with_judge(run, case_run.case_version, trace)
+                self._persist_text_case_result(run, case_run, trace, call, scored=scored)
+                self.session.commit()
+            except Exception as exc:
+                self._persist_text_case_result(
+                    run,
+                    case_run,
+                    {
+                        "transcript": [],
+                        "assistant_text": "",
+                        "outcome": "evaluation_error",
+                        "guardrails": ["evaluation_runtime_error"],
+                        "error": str(exc),
+                    },
+                    None,
+                )
+                self.session.commit()
+            if run.config_snapshot.get("fail_fast") and case_run.passed is False:
+                break
+        run.status = "completed"
+        run.passed_cases = sum(1 for item in run.case_runs if item.passed is True)
+        run.failed_cases = sum(1 for item in run.case_runs if item.passed is False)
+        completed_scores = [item.score for item in run.case_runs if item.score is not None]
+        run.score = sum(completed_scores) / len(completed_scores) if completed_scores else 0.0
+        run.summary = f"{run.passed_cases} of {run.passed_cases + run.failed_cases} executed cases passed."
+        run.ended_at = _now()
+        self.session.commit()
+
+    def _persist_text_case_result(
+        self,
+        run: EvalRun,
+        case_run: EvalCaseRun,
+        trace: dict[str, object],
+        call=None,
+        *,
+        scored: tuple[float, bool, list[dict[str, object]], list[dict[str, object]]] | None = None,
+    ) -> None:
+        score, passed, assertions, metrics = scored or _score_case(case_run.case_version, trace)
+        now = _now()
+        if call is None:
+            call = self.calls.create(
+                run.tenant_id,
+                run.workspace_id,
+                direction="simulation",
+                status="completed",
+                is_test=True,
+                agent_version_id=run.suite_version.agent_version_id,
+                resolved_config={
+                    "source": "eval",
+                    "eval_run_id": str(run.id),
+                    "eval_case_id": str(case_run.case_version.case_id),
+                    "execution_mode": "text_chat",
+                    "status_label": "Completed" if passed else "Dropped",
+                    "summary": "Text chat evaluation failed before a response was captured.",
+                    "outcome": trace.get("outcome", "evaluation_failed"),
+                    "transcript": trace.get("transcript", []),
+                    "metrics": {"score": score, "execution_mode": "text_chat"},
+                },
+                started_at=case_run.started_at or now,
+                ended_at=now,
+            )
+        self.session.add(
+            CallEvent(
+                call_id=call.id,
+                tenant_id=run.tenant_id,
+                event_type="eval.case.completed",
+                payload={
+                    "run_id": str(run.id),
+                    "case_id": str(case_run.case_version.case_id),
+                    "execution_mode": "text_chat",
+                    "passed": passed,
+                    "score": score,
+                },
+                occurred_at=now,
+            )
+        )
+        case_run.call_id = call.id
+        case_run.status = "completed"
+        case_run.passed = passed
+        case_run.score = score
+        case_run.failure_summary = "" if passed else "One or more evaluation assertions failed."
+        case_run.evidence = trace
+        case_run.ended_at = now
+        for assertion in assertions:
+            self.session.add(
+                EvalAssertionResult(
+                    case_run_id=case_run.id,
+                    assertion_key=assertion["key"],
+                    assertion_type=assertion["type"],
+                    passed=assertion["passed"],
+                    critical=assertion["critical"],
+                    expected=assertion["expected"],
+                    actual=assertion["actual"],
+                    explanation=assertion["explanation"],
+                )
+            )
+        for metric in metrics:
+            self.session.add(EvalMetricResult(case_run_id=case_run.id, **metric))
+        self.session.flush()
 
     async def execute_live_run(self, settings, tenant_slug: str, workspace_id, run_id) -> None:
         try:
@@ -893,7 +1282,8 @@ class EvaluationService:
                         "error": "caller did not complete within the evaluation timeout",
                     }
                 trace = _normalize_live_trace(evidence)
-                self._persist_live_case_result(run, case_run, trace, settings)
+                scored = await self._score_case_with_judge(run, case_run.case_version, trace)
+                self._persist_live_case_result(run, case_run, trace, settings, scored=scored)
                 self.session.commit()
             except Exception as exc:
                 self._persist_live_case_result(
@@ -935,8 +1325,10 @@ class EvaluationService:
         case_run: EvalCaseRun,
         trace: dict[str, object],
         settings,
+        *,
+        scored: tuple[float, bool, list[dict[str, object]], list[dict[str, object]]] | None = None,
     ) -> None:
-        score, passed, assertions, metrics = _score_case(case_run.case_version, trace)
+        score, passed, assertions, metrics = scored or _score_case(case_run.case_version, trace)
         now = _now()
         call = self.calls.create(
             run.tenant_id,
